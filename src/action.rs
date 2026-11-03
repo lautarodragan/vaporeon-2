@@ -237,22 +237,6 @@ pub enum NavigationAction {
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug, Hash, EnumString, Ord, PartialOrd)]
 pub enum TextAction {
-    Char(char),
-    MoveCaretToNextGrapheme,
-    MoveCaretToPreviousGrapheme,
-    MoveCaretToNextWord,
-    MoveCaretToPreviousWord,
-    MoveCaretToNextLine,
-    MoveCaretToPreviousLine,
-    MoveCaretToBeginningOfLine,
-    MoveCaretToEndOfLine,
-    MoveCaretToBeginningOfText,
-    MoveCaretToEndOfText,
-    NewLine,
-    Delete,
-    DeleteBack,
-    DeleteBackWord,
-    DeleteLine,
     EnterEditMode,
     ConfirmEdit,
     ConfirmEditMultiLine,
@@ -346,21 +330,11 @@ impl Actions {
 
     pub fn actions_by_key(&self, key: KeyEvent) -> Vec<Action> {
         let kb = KeyBinding::from(key);
-        let mut actions = self
-            .actions
+        self.actions
             .get(&kb)
             .or(DEFAULT_ACTIONS.get(&kb))
             .cloned()
-            .unwrap_or_default();
-
-        if let KeyCode::Char(c) = key.code
-            && !key.modifiers.contains(KeyModifiers::CONTROL)
-            && !key.modifiers.contains(KeyModifiers::ALT)
-        {
-            actions.push(Action::Text(TextAction::Char(c)));
-        }
-
-        actions
+            .unwrap_or_default()
     }
 
     pub fn contains(&self, action: Action) -> bool {
@@ -486,7 +460,6 @@ mod tests {
         ]);
         assert_eq!(actions_for(KeyCode::Char('g'), KeyModifiers::NONE), vec![
             Action::Navigation(NavigationAction::ToggleGlobalPanel),
-            Action::Text(TextAction::Char('g')),
         ]);
         assert_eq!(actions_for(KeyCode::Enter, KeyModifiers::CONTROL), vec![
             Action::Task(TaskAction::Create),
@@ -495,15 +468,6 @@ mod tests {
         assert!(
             actions_for(KeyCode::BackTab, KeyModifiers::SHIFT)
                 .contains(&Action::Navigation(NavigationAction::FocusPrevious))
-        );
-    }
-
-    #[test]
-    fn no_chars_for_ctrl_or_alt() {
-        assert!(
-            !actions_for(KeyCode::Char('d'), KeyModifiers::CONTROL)
-                .iter()
-                .any(|a| matches!(a, Action::Text(TextAction::Char(_))))
         );
     }
 

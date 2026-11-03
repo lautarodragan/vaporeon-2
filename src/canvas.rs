@@ -1,11 +1,12 @@
 //! Tiny immediate-mode drawing layer on top of Cairo + Pango.
 //!
-//! Components lay themselves out in "rows" (one line of text each) and draw text with [`Canvas::text`].
-//! Horizontal positions are in pixels, but paddings are usually expressed as a number of "columns",
-//! (the width of an `M` in the configured font) through [`Canvas::cols`], so that the layout
-//! resembles the one we had in the terminal.
+//! Components lay themselves out in rows (one line of text each, [`Canvas::line_height`] pixels tall)
+//! and draw text with [`Canvas::text`]. Everything is measured in pixels.
+//!
+//! Text being edited is not drawn here: components call [`Canvas::set_editor`] instead, and a GTK text widget
+//! is placed on top of the canvas at that position (see `main.rs`).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use gtk::{cairo, pango};
 
@@ -63,26 +64,29 @@ impl Style {
     }
 }
 
-pub struct Canvas<'a> {
-    cr: &'a cairo::Context,
-    layout: pango::Layout,
-    font: pango::FontDescription,
-    bold_font: pango::FontDescription,
-    pub theme: &'a Theme,
-    /// Height of a single row of text, in pixels.
-    pub line_height: f64,
-    /// Width of a single "column" (an `M`), in pixels.
-    pub col_width: f64,
-    pub width: f64,
-    pub height: f64,
-    clip_stack: RefCell<Vec<Rect>>,
+/// What kind of text is being edited.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum EditTarget {
+    /// The title of a task. Single line.
+    TaskTitle,
+    /// The description of a task, in the details panel. Multiple lines.
+    TaskDetails,
 }
 
-/// Font metrics, used both for drawing and to know how many rows fit in the window.
-#[derive(Debug, Copy, Clone)]
+/// Where the text editor widget should be.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct EditorPlacement {
+    pub target: EditTarget,
+    pub rect: Rect,
+}
+
+/// Font metrics, used both for drawing and for placing the text editor widgets.
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Metrics {
+    /// Height of a row, in pixels.
     pub line_height: f64,
-    pub col_width: f64,
+    /// Height of the text itself (Pango's logical height of a line), in pixels.
+    pub text_height: f64,
 }
 
 impl Metrics {
@@ -90,12 +94,32 @@ impl Metrics {
         let layout = pango::Layout::new(pango_context);
         layout.set_font_description(Some(&theme.font_description()));
         layout.set_text("M");
-        let (w, h) = layout.pixel_size();
+        let text_height = layout.pixel_size().1 as f64;
         Self {
-            line_height: (h as f64 * theme.line_height).round().max(1.0),
-            col_width: (w as f64).max(1.0),
+            line_height: (text_height * theme.line_height).round().max(text_height),
+            text_height,
         }
     }
+
+    /// Distance from the top of a row to the top of its text. Text is vertically centered in its row.
+    pub fn text_offset(&self) -> f64 {
+        ((self.line_height - self.text_height) / 2.0).floor()
+    }
+}
+
+pub struct Canvas<'a> {
+    cr: &'a cairo::Context,
+    layout: pango::Layout,
+    font: pango::FontDescription,
+    bold_font: pango::FontDescription,
+    pub theme: &'a Theme,
+    pub metrics: Metrics,
+    /// Height of a single row of text, in pixels.
+    pub line_height: f64,
+    pub width: f64,
+    pub height: f64,
+    clip_stack: RefCell<Vec<Rect>>,
+    editor: Cell<Option<EditorPlacement>>,
 }
 
 impl<'a> Canvas<'a> {
@@ -118,17 +142,13 @@ impl<'a> Canvas<'a> {
             font,
             bold_font,
             theme,
+            metrics,
             line_height: metrics.line_height,
-            col_width: metrics.col_width,
             width,
             height,
             clip_stack: RefCell::new(vec![]),
+            editor: Cell::new(None),
         }
-    }
-
-    /// Converts a number of "columns" to pixels.
-    pub fn cols(&self, n: impl Into<f64>) -> f64 {
-        n.into() * self.col_width
     }
 
     /// Converts a number of rows to pixels.
@@ -171,16 +191,14 @@ impl<'a> Canvas<'a> {
         self.layout.pixel_size().0 as f64
     }
 
-    /// Draws a single line of text with its top-left corner at (x, y), vertically centered in the row.
-    /// Returns the width of the drawn text.
+    /// Draws a single line of text in the row that starts at `y`. Returns the width of the drawn text.
     pub fn text(&self, x: f64, y: f64, text: &str, style: Style) -> f64 {
         self.prepare_layout(text, &style);
-        let (w, h) = self.layout.pixel_size();
         let color = if style.dim { style.fg.dimmed() } else { style.fg };
         self.set_color(color);
-        self.cr.move_to(x, y + ((self.line_height - h as f64) / 2.0).floor());
+        self.cr.move_to(x, y + self.metrics.text_offset());
         pangocairo::functions::show_layout(self.cr, &self.layout);
-        w as f64
+        self.layout.pixel_size().0 as f64
     }
 
     /// Draws several pieces of text next to each other. Returns the total width.
@@ -192,34 +210,6 @@ impl<'a> Canvas<'a> {
 
     pub fn measure_spans(&self, spans: &[(&str, Style)]) -> f64 {
         spans.iter().map(|(text, style)| self.measure(text, style)).sum()
-    }
-
-    /// X offset, in pixels, of the given byte index inside `text`.
-    pub fn x_of_byte_index(&self, text: &str, style: &Style, byte_index: usize) -> f64 {
-        self.prepare_layout(text, style);
-        let index = byte_index.min(text.len()) as i32;
-        let pos = self.layout.index_to_pos(index);
-        pos.x() as f64 / pango::SCALE as f64
-    }
-
-    /// Draws the text caret (a thin vertical bar) at the given position.
-    pub fn caret(&self, x: f64, y: f64, color: Color) {
-        let h = self.line_height.min(self.layout_line_height() + 2.0);
-        let y = y + ((self.line_height - h) / 2.0).floor();
-        self.fill(
-            Rect {
-                x: x.round(),
-                y,
-                width: (self.col_width / 8.0).max(1.5).round(),
-                height: h,
-            },
-            color,
-        );
-    }
-
-    fn layout_line_height(&self) -> f64 {
-        self.prepare_layout("M", &Style::new(Color::default()));
-        self.layout.pixel_size().1 as f64
     }
 
     /// Restricts drawing to `rect` until the matching [`Canvas::pop_clip`].
@@ -234,5 +224,19 @@ impl<'a> Canvas<'a> {
         if self.clip_stack.borrow_mut().pop().is_some() {
             let _ = self.cr.restore();
         }
+    }
+
+    /// Right edge of the current clip rectangle (or of the canvas, if there is none).
+    pub fn clip_right(&self) -> f64 {
+        self.clip_stack.borrow().last().map(Rect::right).unwrap_or(self.width)
+    }
+
+    /// Marks where the text editor widget should be placed. Text being edited is not drawn by the canvas.
+    pub fn set_editor(&self, target: EditTarget, rect: Rect) {
+        self.editor.set(Some(EditorPlacement { target, rect }));
+    }
+
+    pub fn editor(&self) -> Option<EditorPlacement> {
+        self.editor.get()
     }
 }

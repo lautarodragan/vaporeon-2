@@ -2,13 +2,15 @@
 
 use std::{cell::RefCell, error::Error, rc::Rc};
 
+use chrono::Local;
 use flexi_logger::{FileSpec, WriteMode};
 use gtk::{gdk, gio, glib, prelude::*};
 
 use crate::{
-    action::{Action, Actions, ApplicationAction, KeyEvent, KeyModifiers, OnActions, TextAction},
-    canvas::Canvas,
+    action::{Action, Actions, ApplicationAction, KeyCode, KeyEvent, OnActions, TextAction},
+    canvas::{Canvas, EditTarget},
     components::root::Root,
+    editors::Editors,
     log_format::log_format,
     settings::Settings,
     theme::Theme,
@@ -19,6 +21,7 @@ mod action;
 mod canvas;
 mod clipboard;
 mod components;
+mod editors;
 mod git;
 mod log_format;
 mod models;
@@ -40,7 +43,7 @@ window.vaporeon > * {
 }
 ";
 
-struct App {
+pub struct App {
     root: Root,
     settings: Settings,
     theme: Theme,
@@ -49,7 +52,7 @@ struct App {
     theme_file_monitor: Option<gio::FileMonitor>,
 }
 
-type AppRef = Rc<RefCell<App>>;
+pub type AppRef = Rc<RefCell<App>>;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let _logger = flexi_logger::Logger::try_with_str("vaporeon=trace, warn")?
@@ -118,20 +121,31 @@ fn build_ui(application: &gtk::Application) {
         .can_focus(true)
         .build();
 
+    let editors = Rc::new(Editors::new(&drawing_area));
+    editors.apply_theme(&app.borrow().theme);
+    editors.connect(&app);
+
+    // The drawing area is redrawn (entirely) only when something changes: after handling a key press, when the
+    // window is resized, when the theme changes, etc. See `queue_draw` calls.
     drawing_area.set_draw_func({
         let app = app.clone();
+        let editors = editors.clone();
         move |area, cr, width, height| {
-            let mut app = app.borrow_mut();
-            let App { root, theme, .. } = &mut *app;
-            let canvas = Canvas::new(cr, &area.pango_context(), theme, width as f64, height as f64);
-            root.set_visible_rows(Root::visible_rows(&canvas));
-            root.refresh_scroll();
-            root.render(&canvas);
+            let editor_placement = {
+                let mut app = app.borrow_mut();
+                let App { root, theme, .. } = &mut *app;
+                let canvas = Canvas::new(cr, &area.pango_context(), theme, width as f64, height as f64);
+                root.set_visible_rows(Root::visible_rows(&canvas));
+                root.refresh_scroll();
+                root.render(&canvas);
+                canvas.editor()
+            };
+            editors.after_draw(&app, editor_placement);
         }
     });
 
-    setup_input(&app, &window, &drawing_area);
-    watch_theme_file(&app, &window, &drawing_area);
+    setup_input(&app, &window, &editors);
+    watch_theme_file(&app, &window, &editors);
 
     window.connect_close_request({
         let app = app.clone();
@@ -143,19 +157,28 @@ fn build_ui(application: &gtk::Application) {
         }
     });
 
-    // The week view highlights "today", so redraw every now and then in case the day changes.
+    // The week view highlights "today", so redraw when the day changes.
     glib::timeout_add_seconds_local(30, {
         let drawing_area = drawing_area.downgrade();
-        move || match drawing_area.upgrade() {
-            Some(drawing_area) => {
+        let mut today = Local::now().date_naive();
+        move || {
+            let Some(drawing_area) = drawing_area.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            let now = Local::now().date_naive();
+            if now != today {
+                today = now;
                 drawing_area.queue_draw();
-                glib::ControlFlow::Continue
             }
-            None => glib::ControlFlow::Break,
+            glib::ControlFlow::Continue
         }
     });
 
-    window.set_child(Some(&drawing_area));
+    let overlay = gtk::Overlay::new();
+    overlay.set_child(Some(&drawing_area));
+    overlay.add_overlay(&editors.fixed);
+
+    window.set_child(Some(&overlay));
     window.present();
     drawing_area.grab_focus();
 }
@@ -170,126 +193,109 @@ fn load_css() {
     gtk::style_context_add_provider_for_display(&display, &provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
 }
 
-fn setup_input(app: &AppRef, window: &gtk::ApplicationWindow, drawing_area: &gtk::DrawingArea) {
-    // The input method context takes care of dead keys (´ + a = á), compose sequences, and IMEs.
-    // We only route key presses through it while editing text, so single-key shortcuts keep working otherwise.
-    let im_context = gtk::IMMulticontext::new();
-    im_context.set_client_widget(Some(drawing_area));
-    im_context.set_use_preedit(false);
+/// Whether `action` ends editing `target`.
+fn ends_editing(target: EditTarget, action: &Action) -> bool {
+    matches!(
+        (target, action),
+        (
+            EditTarget::TaskTitle,
+            Action::Text(TextAction::ConfirmEdit | TextAction::CancelEdit)
+        ) | (
+            EditTarget::TaskDetails,
+            Action::Text(TextAction::ConfirmEditMultiLine | TextAction::CancelEdit)
+        )
+    )
+}
 
-    im_context.connect_commit({
-        let app = app.clone();
-        let drawing_area = drawing_area.downgrade();
-        move |_, text| {
-            let actions = text
-                .chars()
-                .map(|c| Action::Text(TextAction::Char(c)))
-                .collect::<Vec<_>>();
-            for action in actions {
-                app.borrow_mut().root.on_actions(vec![action]);
-            }
-            if let Some(drawing_area) = drawing_area.upgrade() {
-                drawing_area.queue_draw();
-            }
-        }
-    });
-
-    let focus_controller = gtk::EventControllerFocus::new();
-    focus_controller.connect_enter({
-        let im_context = im_context.clone();
-        move |_| im_context.focus_in()
-    });
-    focus_controller.connect_leave({
-        let im_context = im_context.clone();
-        move |_| im_context.focus_out()
-    });
-    drawing_area.add_controller(focus_controller);
-
+fn setup_input(app: &AppRef, window: &gtk::ApplicationWindow, editors: &Rc<Editors>) {
     let key_controller = gtk::EventControllerKey::new();
+
+    // Capture phase: we see key presses before the focused widget (e.g. a text editor) does.
+    key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
 
     key_controller.connect_key_pressed({
         let app = app.clone();
         let window = window.downgrade();
-        let drawing_area = drawing_area.downgrade();
-        let im_context = im_context.clone();
-        move |controller, key, _keycode, state| {
-            let log_events = std::env::args().any(|arg| arg == "--log-events");
-            let is_editing = app.borrow().root.is_editing();
-            let modifiers = KeyModifiers::from_gdk(state);
-            let is_plain_key = !modifiers.contains(KeyModifiers::CONTROL) && !modifiers.contains(KeyModifiers::ALT);
-
-            // This must happen before converting to a KeyEvent: dead keys (like ´) don't map to any KeyEvent.
-            // Note: `filter_keypress` may synchronously emit `commit`, which borrows `app`,
-            // so we must not be holding a borrow here.
-            if is_editing
-                && is_plain_key
-                && let Some(gdk_event) = controller.current_event()
-                && im_context.filter_keypress(&gdk_event)
-            {
-                if log_events {
-                    log::debug!("event: {key:?} {state:?} (handled by input method)");
-                }
-                return glib::Propagation::Stop;
-            }
-
+        let editors = editors.clone();
+        move |_, key, _keycode, state| {
             let Some(event) = KeyEvent::from_gdk(key, state) else {
                 return glib::Propagation::Proceed;
             };
 
-            if log_events {
+            if std::env::args().any(|arg| arg == "--log-events") {
                 log::debug!("event: {event:?} ({key:?}, {state:?})");
             }
 
-            let actions = app.borrow().actions.actions_by_key(event);
+            let (editing, actions) = {
+                let app = app.borrow();
+                (app.root.editing(), app.actions.actions_by_key(event))
+            };
 
             if actions.contains(&Action::Application(ApplicationAction::Quit)) {
                 if let Some(window) = window.upgrade() {
                     window.close();
                 }
                 return glib::Propagation::Stop;
-            } else if actions.contains(&Action::Application(ApplicationAction::Save)) {
+            }
+
+            if actions.contains(&Action::Application(ApplicationAction::Save)) {
                 let app = app.borrow();
                 app.root.save();
                 app.root.save_global();
-            } else if actions.contains(&Action::Application(ApplicationAction::Paste)) {
-                paste(&app, &drawing_area);
+                return glib::Propagation::Stop;
+            }
+
+            if let Some(target) = editing {
+                // While editing, the text editor gets every key, except for the ones that stop editing.
+                if let Some(action) = actions.into_iter().find(|a| ends_editing(target, a)) {
+                    app.borrow_mut().root.on_actions(vec![action]);
+                    editors.hide();
+                    editors.drawing_area.queue_draw();
+                    return glib::Propagation::Stop;
+                }
+
+                // Don't let these move the focus out of a single-line editor.
+                if target == EditTarget::TaskTitle
+                    && matches!(
+                        event.code,
+                        KeyCode::Up
+                            | KeyCode::Down
+                            | KeyCode::PageUp
+                            | KeyCode::PageDown
+                            | KeyCode::Tab
+                            | KeyCode::BackTab
+                    )
+                {
+                    return glib::Propagation::Stop;
+                }
+
+                return glib::Propagation::Proceed;
+            }
+
+            if actions.contains(&Action::Application(ApplicationAction::Paste)) {
+                paste(&app, &editors.drawing_area);
             } else {
                 app.borrow_mut().root.on_actions(actions);
             }
 
-            if let Some(drawing_area) = drawing_area.upgrade() {
-                drawing_area.queue_draw();
-            }
+            editors.drawing_area.queue_draw();
 
             glib::Propagation::Stop
         }
     });
 
-    key_controller.connect_key_released({
-        let app = app.clone();
-        let im_context = im_context.clone();
-        move |controller, _key, _keycode, _state| {
-            let is_editing = app.borrow().root.is_editing();
-            if is_editing && let Some(gdk_event) = controller.current_event() {
-                im_context.filter_keypress(&gdk_event);
-            }
-        }
-    });
-
-    // Attach to the window rather than the drawing area, so keys work regardless of what has focus.
     window.add_controller(key_controller);
 }
 
-/// Reads text from the clipboard and pastes it.
-///
-/// While editing text, the pasted text is inserted at the caret. Otherwise, it's added as a new task.
-fn paste(app: &AppRef, drawing_area: &glib::WeakRef<gtk::DrawingArea>) {
+/// Reads text from the clipboard and adds it as a new task.
+/// (While editing, pasting is handled by the text editor itself.)
+fn paste(app: &AppRef, drawing_area: &gtk::DrawingArea) {
     let Some(display) = gdk::Display::default() else {
         return;
     };
     let clipboard = display.clipboard();
     let app = app.clone();
-    let drawing_area = drawing_area.clone();
+    let drawing_area = drawing_area.downgrade();
 
     glib::spawn_future_local(async move {
         let text = match clipboard.read_text_future().await {
@@ -306,21 +312,9 @@ fn paste(app: &AppRef, drawing_area: &glib::WeakRef<gtk::DrawingArea>) {
 
         log::debug!("Pasted: {text}");
 
-        let mut app = app.borrow_mut();
-        if app.root.is_editing() {
-            for c in text.chars() {
-                let action = if c == '\n' {
-                    Action::Text(TextAction::NewLine)
-                } else {
-                    Action::Text(TextAction::Char(c))
-                };
-                app.root.on_actions(vec![action]);
-            }
-        } else {
-            app.root
-                .on_actions(vec![Action::Application(ApplicationAction::PasteText(text))]);
-        }
-        drop(app);
+        app.borrow_mut()
+            .root
+            .on_actions(vec![Action::Application(ApplicationAction::PasteText(text))]);
 
         if let Some(drawing_area) = drawing_area.upgrade() {
             drawing_area.queue_draw();
@@ -330,7 +324,7 @@ fn paste(app: &AppRef, drawing_area: &glib::WeakRef<gtk::DrawingArea>) {
 
 /// Reloads the theme whenever `~/.config/vaporeon/theme.toml` changes, so it's easy to tweak colors, fonts
 /// and opacity while looking at the result.
-fn watch_theme_file(app: &AppRef, window: &gtk::ApplicationWindow, drawing_area: &gtk::DrawingArea) {
+fn watch_theme_file(app: &AppRef, window: &gtk::ApplicationWindow, editors: &Rc<Editors>) {
     let Ok(path) = get_config_file_path("theme") else {
         return;
     };
@@ -346,7 +340,7 @@ fn watch_theme_file(app: &AppRef, window: &gtk::ApplicationWindow, drawing_area:
     monitor.connect_changed({
         let app = app.clone();
         let window = window.downgrade();
-        let drawing_area = drawing_area.downgrade();
+        let editors = Rc::downgrade(editors);
         move |_, _, _, event| {
             if !matches!(
                 event,
@@ -361,10 +355,11 @@ fn watch_theme_file(app: &AppRef, window: &gtk::ApplicationWindow, drawing_area:
             if let Some(window) = window.upgrade() {
                 window.set_decorated(theme.window_decorations);
             }
-            app.borrow_mut().theme = theme;
-            if let Some(drawing_area) = drawing_area.upgrade() {
-                drawing_area.queue_draw();
+            if let Some(editors) = editors.upgrade() {
+                editors.apply_theme(&theme);
+                editors.drawing_area.queue_draw();
             }
+            app.borrow_mut().theme = theme;
         }
     });
 

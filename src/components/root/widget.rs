@@ -5,7 +5,8 @@ use chrono::{Datelike, Local, NaiveDate, Weekday};
 use super::{RightPanel, Root};
 use crate::{
     canvas::{Canvas, Rect, Style},
-    components::FocusableWidget,
+    components::{FocusableWidget, spacing},
+    theme::Theme,
 };
 
 const WEEKDAYS: [Weekday; 7] = [
@@ -18,18 +19,13 @@ const WEEKDAYS: [Weekday; 7] = [
     Weekday::Sun,
 ];
 
-/// Below this width (in columns), only one panel is shown, using the full width.
-const TWO_PANELS_MIN_WIDTH: f64 = 100.0;
+/// Below this width (in pixels), only one panel is shown, using the full width.
+const TWO_PANELS_MIN_WIDTH: f64 = 900.0;
 
 /// Rows used by the header (the "Project: ..." line plus an empty line).
 pub const HEADER_ROWS: f64 = 2.0;
 
 impl Root {
-    /// Horizontal padding, in pixels, on each side of the window.
-    fn left_padding_px(&self, canvas: &Canvas) -> f64 {
-        canvas.cols(self.left_padding)
-    }
-
     /// How many task rows fit below the header.
     pub fn visible_rows(canvas: &Canvas) -> usize {
         ((canvas.height / canvas.line_height) - HEADER_ROWS).max(0.0) as usize
@@ -37,46 +33,56 @@ impl Root {
 
     pub fn render(&self, canvas: &Canvas) {
         let theme = canvas.theme;
-        let padding = self.left_padding_px(canvas);
 
         let mut area = Rect {
-            x: padding,
+            x: spacing::WINDOW,
             y: canvas.rows(0.35).round(),
-            width: (canvas.width - padding * 2.0).max(0.0),
+            width: (canvas.width - spacing::WINDOW * 2.0).max(0.0),
             height: canvas.height,
         };
-        let width_in_cols = area.width / canvas.col_width;
 
         canvas.clear(theme.window_background());
 
-        // Header: project filter
+        // Header: project filter, on the left
         let header_style = Style::new(theme.list_entry);
         let project_name = self
             .project_filter
             .and_then(|i| self.settings.visible_projects().get(i).map(|p| p.name.clone()))
             .unwrap_or_else(|| "All".to_string());
-        canvas.spans(area.x, area.y, &[
+        let project_width = canvas.spans(area.x, area.y, &[
             ("Project: ", header_style.dim()),
             (project_name.as_str(), header_style),
         ]);
+        let free_left = area.x + project_width + spacing::HEADER_GAP;
 
-        // Header: selected date, centered
-        if width_in_cols >= 90.0 {
-            let date = self.selected_date.format("%Y-%m-%d").to_string();
-            let style = Style::new(theme.list_header).bold();
-            let w = canvas.measure(&date, &style);
-            canvas.text(((canvas.width - w) / 2.0).round(), area.y, &date, style);
+        // Header: week quick view, on the right. Only if it fits.
+        let day_names: Vec<String> = WEEKDAYS.iter().map(|d| d.to_string()).collect();
+        let week = week_quick_view_spans(theme, self.selected_date, &day_names);
+        let week_width = canvas.measure_spans(&week);
+        let week_x = (area.right() - week_width).round();
+        let show_week = week_x >= free_left;
+        if show_week {
+            canvas.spans(week_x, area.y, &week);
         }
+        let free_right = if show_week {
+            week_x - spacing::HEADER_GAP
+        } else {
+            area.right()
+        };
 
-        // Header: week quick view, right-aligned
-        if width_in_cols > 40.0 {
-            render_week_quick_view(canvas, self.selected_date, area);
+        // Header: selected date, centered. Only if it fits.
+        let date = self.selected_date.format("%Y-%m-%d").to_string();
+        let date_style = Style::new(theme.list_header).bold();
+        let date_width = canvas.measure(&date, &date_style);
+        let date_x = ((canvas.width - date_width) / 2.0).round();
+        if date_x >= free_left && date_x + date_width <= free_right {
+            canvas.text(date_x, area.y, &date, date_style);
         }
 
         area.y += canvas.rows(HEADER_ROWS);
         area.height = (canvas.height - area.y).max(0.0);
 
-        let single_panel = width_in_cols < TWO_PANELS_MIN_WIDTH;
+        let single_panel = area.width < TWO_PANELS_MIN_WIDTH;
         let show_left = !single_panel || self.selected_panel == 0;
         let show_right = !single_panel || self.selected_panel == 1;
 
@@ -114,13 +120,15 @@ impl Root {
     }
 }
 
-fn render_week_quick_view(canvas: &Canvas, selected_date: NaiveDate, area: Rect) {
-    let theme = canvas.theme;
+fn week_quick_view_spans<'a>(
+    theme: &Theme,
+    selected_date: NaiveDate,
+    day_names: &'a [String],
+) -> Vec<(&'a str, Style)> {
     let now = Local::now().date_naive();
     let selected_day = selected_date.weekday();
     let selected_date_week_ordering = selected_date.iso_week().cmp(&now.iso_week());
 
-    let day_names: Vec<String> = WEEKDAYS.iter().map(|d| d.to_string()).collect();
     let plain = Style::new(theme.list_entry);
     let mut spans: Vec<(&str, Style)> = vec![];
 
@@ -151,6 +159,5 @@ fn render_week_quick_view(canvas: &Canvas, selected_date: NaiveDate, area: Rect)
         (" ", plain)
     });
 
-    let width = canvas.measure_spans(&spans);
-    canvas.spans((area.right() - width).round(), area.y, &spans);
+    spans
 }

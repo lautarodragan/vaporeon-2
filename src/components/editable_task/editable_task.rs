@@ -1,30 +1,23 @@
-use unicode_segmentation::UnicodeSegmentation;
-
 use crate::models::Task as DayTask;
 
+/// A task in a task list. The text itself is edited by a GTK text widget (see `main.rs`);
+/// this only keeps track of whether the task is being edited.
 #[derive(Clone, Debug)]
 pub struct EditableTask {
     pub(super) title: String,
     pub(super) description: String,
     pub(super) is_editing: bool,
-
-    /// Position of the caret. Measured in graphemes, **not** bytes.
-    ///
-    /// For example, the string "aéi" is 3 graphemes, but 4 bytes long. The graphemes are at bytes 0, 1, and 3.
-    ///
-    /// Valid values are `[zero, text.len()]` (both ends **included**). This allows placing
-    /// the caret beyond the last byte of `text`, which means `text[caret_position]` **can panic**.
-    pub(super) caret_position: usize,
+    /// Title before editing started, so the edit can be cancelled.
+    pub(super) title_before_editing: Option<String>,
 }
 
 impl EditableTask {
-    pub fn new(text: String, details: String) -> Self {
-        let graphemes = UnicodeSegmentation::grapheme_indices(text.as_str(), true).collect::<Vec<(usize, &str)>>();
+    pub fn new(title: String, description: String) -> Self {
         Self {
+            title,
+            description,
             is_editing: false,
-            caret_position: graphemes.len(),
-            title: text,
-            description: details,
+            title_before_editing: None,
         }
     }
 
@@ -41,7 +34,20 @@ impl EditableTask {
     }
 
     pub fn set_is_editing(&mut self, v: bool) {
+        if v && !self.is_editing {
+            self.title_before_editing = Some(self.title.clone());
+        } else if !v {
+            self.title_before_editing = None;
+        }
         self.is_editing = v;
+    }
+
+    /// Stops editing, restoring the title to what it was before editing started.
+    pub fn cancel_editing(&mut self) {
+        if let Some(title) = self.title_before_editing.take() {
+            self.title = title;
+        }
+        self.is_editing = false;
     }
 
     pub fn is_empty(&self) -> bool {
@@ -65,17 +71,11 @@ impl EditableTask {
     }
 
     pub fn take_title(&mut self) -> String {
-        self.caret_position = 0;
         std::mem::take(&mut self.title)
     }
 
     pub fn set_title(&mut self, v: String) {
-        self.caret_position = 0;
         self.title = v;
-    }
-
-    pub fn into_title(self) -> String {
-        self.title
     }
 
     pub fn take_description(&mut self) -> String {
@@ -87,19 +87,32 @@ impl EditableTask {
     }
 
     pub fn clear(&mut self) {
-        self.caret_position = 0;
         self.title.clear()
     }
+}
 
-    pub fn graphemes(&self) -> Vec<(usize, &str)> {
-        UnicodeSegmentation::grapheme_indices(self.title.as_str(), true).collect::<Vec<(usize, &str)>>()
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::{Action, OnActions, TextAction};
+
+    #[test]
+    fn cancel_restores_title() {
+        let mut task = EditableTask::new("hola".to_string(), "".to_string());
+        assert!(task.on_actions(vec![Action::Text(TextAction::EnterEditMode)]));
+        task.set_title("chau".to_string());
+        assert!(task.on_actions(vec![Action::Text(TextAction::CancelEdit)]));
+        assert_eq!(task.title(), "hola");
+        assert!(!task.is_editing());
     }
 
-    /// Byte index (inside `title`) of the caret.
-    pub fn caret_byte_index(&self) -> usize {
-        self.graphemes()
-            .get(self.caret_position)
-            .map(|(i, _)| *i)
-            .unwrap_or(self.title.len())
+    #[test]
+    fn confirm_keeps_title() {
+        let mut task = EditableTask::new("hola".to_string(), "".to_string());
+        task.on_actions(vec![Action::Text(TextAction::EnterEditMode)]);
+        task.set_title("chau".to_string());
+        task.on_actions(vec![Action::Text(TextAction::ConfirmEdit)]);
+        assert_eq!(task.title(), "chau");
+        assert!(!task.is_editing());
     }
 }

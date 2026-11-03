@@ -3,6 +3,7 @@ use std::{fs::remove_file, io::ErrorKind};
 use chrono::{Days, Local, NaiveDate};
 
 use crate::{
+    canvas::EditTarget,
     components::{
         EditableTask,
         task_details::TaskDetails,
@@ -23,7 +24,6 @@ pub struct Root {
     pub(super) selected_panel: usize, // 0 = selected day, 1 = global
     pub(super) selected_date: NaiveDate,
     pub(super) selected_status_list: usize,
-    pub(super) left_padding: u16,
     pub(super) project_filter: Option<usize>,
 }
 
@@ -37,14 +37,9 @@ impl Root {
             selected_panel: 0,
             selected_date: Local::now().date_naive(),
             selected_status_list: 0,
-            left_padding: 2,
             project_filter: None,
             right_panel: RightPanel::Nothing,
         }
-    }
-
-    pub fn is_editing(&self) -> bool {
-        self.task_list_day.is_editing() || self.task_list_global.is_editing() || self.task_details.is_editing()
     }
 
     fn file_name(&self) -> String {
@@ -251,6 +246,48 @@ impl Root {
 
     pub fn selected_task_mut(&mut self) -> &mut EditableTask {
         self.selected_status_mut().selected_project_mut().selected_task_mut()
+    }
+
+    /// What is being edited, if anything.
+    pub fn editing(&self) -> Option<EditTarget> {
+        if self.task_details.is_editing() {
+            Some(EditTarget::TaskDetails)
+        } else if self.task_list_day.is_editing() || self.task_list_global.is_editing() {
+            Some(EditTarget::TaskTitle)
+        } else {
+            None
+        }
+    }
+
+    /// The current text of whatever is being edited.
+    pub fn editing_text(&mut self) -> String {
+        match self.editing() {
+            Some(EditTarget::TaskDetails) => self.task_details.description().to_string(),
+            Some(EditTarget::TaskTitle) => self
+                .task_list_day
+                .editing_task_mut()
+                .or(self.task_list_global.editing_task_mut())
+                .map(|task| task.title().to_string())
+                .unwrap_or_default(),
+            None => String::new(),
+        }
+    }
+
+    /// Updates the text of whatever is being edited. Called by the text editor widget on every change.
+    pub fn set_editing_text(&mut self, text: String) {
+        match self.editing() {
+            Some(EditTarget::TaskDetails) => self.task_details.set_description(&text),
+            Some(EditTarget::TaskTitle) => {
+                if let Some(task) = self.task_list_day.editing_task_mut() {
+                    task.set_title(text);
+                    // Keeps the title in the details panel up to date.
+                    self.on_selection_change();
+                } else if let Some(task) = self.task_list_global.editing_task_mut() {
+                    task.set_title(text);
+                }
+            }
+            None => {}
+        }
     }
 
     pub(super) fn on_selection_change(&mut self) {

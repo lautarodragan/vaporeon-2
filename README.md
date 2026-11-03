@@ -6,6 +6,15 @@ Everything works the same as in the terminal version: same keyboard shortcuts, s
 It reads and writes the same `~/.config/vaporeon/settings.toml`, `~/.config/vaporeon/actions.ini`
 and the day files in `storage_path` (`~/vaporeon` by default), so both versions can be used interchangeably.
 
+## Editing text
+
+Text is edited with regular GTK text widgets, placed exactly where the text is drawn. So all the usual GTK
+shortcuts work while editing (Ctrl+Backspace, Ctrl+A, Shift+arrows, Ctrl+Z, etc.), as well as dead keys,
+compose sequences and input methods.
+
+`actions.ini` only controls entering and leaving edit mode (`Text.EnterEditMode`, `Text.ConfirmEdit`,
+`Text.ConfirmEditMultiLine` and `Text.CancelEdit`). Cancelling an edit restores the previous text.
+
 ## Building
 
 Requires GTK 4.12 or newer.

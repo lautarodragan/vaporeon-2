@@ -3,7 +3,7 @@ use std::path::Path;
 use chrono::NaiveDate;
 
 use crate::{
-    components::task_list_for_status::TaskListForStatus,
+    components::{EditableTask, task_list_for_status::TaskListForStatus},
     models::{Day, Task},
     settings::Settings,
 };
@@ -86,6 +86,10 @@ impl TaskList {
             .map(|l| l.height())
             .sum::<usize>()
             + self.status_lists[self.selected_status_list].cursor_y()
+    }
+
+    pub fn editing_task_mut(&mut self) -> Option<&mut EditableTask> {
+        self.status_lists.iter_mut().find_map(|list| list.editing_task_mut())
     }
 
     pub fn set_height(&mut self, height: usize) {

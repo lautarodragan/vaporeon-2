@@ -1,7 +1,7 @@
 use super::Root;
 use crate::{
     action::{Action, DayAction, NavigationAction, OnActions},
-    components::{root::root::RightPanel, task_list::TaskListEvent, textarea::TextAreaEvent},
+    components::{root::root::RightPanel, task_details::TaskDetailsEvent, task_list::TaskListEvent},
 };
 
 impl OnActions for &mut Root {
@@ -10,8 +10,7 @@ impl OnActions for &mut Root {
             let (handled, _event) = self.task_list_day.on_actions(actions.clone());
             if handled {
                 // When task_list_day handles any action, always refresh task_details.
-                //   This covers task creation and live title updates while renaming
-                //   (where the EditableTask swallows chars and returns no event).
+                //   This covers task creation, cancelled edits, etc.
                 // TODO: emit "title changed" event or something?
                 self.on_selection_change();
                 return;
@@ -21,10 +20,10 @@ impl OnActions for &mut Root {
             if handled {
                 match event {
                     Some(TaskListEvent::SelectionChanged) => {
-                        log::error!("Selected task (global) changed");
+                        log::debug!("Selected task (global) changed");
                     }
                     _ => {
-                        log::error!("task_list_global event {:?}", event);
+                        log::debug!("task_list_global event {:?}", event);
                     }
                 }
                 return;
@@ -34,13 +33,15 @@ impl OnActions for &mut Root {
 
             if handled {
                 match event {
-                    Some(TextAreaEvent::TextEditConfirmed) => {
-                        let description = self.task_details.description().join("\n");
+                    Some(TaskDetailsEvent::DescriptionConfirmed) => {
+                        let description = self.task_details.description().to_string();
                         self.selected_task_mut().set_description(description);
                     }
-                    _ => {
-                        log::error!("handled {:?}", event);
+                    Some(TaskDetailsEvent::EditCancelled) => {
+                        // Throw away the edited text, show the task's description again.
+                        self.on_selection_change();
                     }
+                    None => {}
                 }
                 return;
             }

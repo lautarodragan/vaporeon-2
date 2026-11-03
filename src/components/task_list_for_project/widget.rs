@@ -22,7 +22,7 @@ impl FocusableWidget for &TaskListForProject {
             return;
         }
 
-        let left_padding = canvas.cols(self.left_padding());
+        let left_padding = self.left_padding();
 
         area.x += left_padding;
         for (i, task) in self.tasks.iter().enumerate() {

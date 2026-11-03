@@ -1,7 +1,7 @@
 use super::TaskListForStatus;
 use crate::{
     canvas::{Canvas, Rect, Style},
-    components::FocusableWidget,
+    components::{FocusableWidget, spacing},
 };
 
 impl FocusableWidget for &TaskListForStatus {
@@ -18,7 +18,7 @@ impl FocusableWidget for &TaskListForStatus {
         }
 
         let render_left_border = self.project_filter.is_none();
-        let left_padding = canvas.cols(self.left_padding());
+        let left_padding = self.left_padding();
         let border_x = area.x;
 
         area.x += left_padding;
@@ -46,11 +46,10 @@ impl FocusableWidget for &TaskListForStatus {
                     end -= canvas.line_height;
                 }
                 if end > start {
-                    // Same look as the '▕' character (right one eighth block) we used in the terminal.
-                    let width = (canvas.col_width / 8.0).max(1.0).round();
+                    let width = spacing::LINE_WIDTH;
                     canvas.fill(
                         Rect {
-                            x: (border_x + canvas.col_width - width).round(),
+                            x: border_x + spacing::STATUS - width,
                             y: start,
                             width,
                             height: end - start,

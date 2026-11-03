@@ -1,5 +1,5 @@
 use crate::{
-    components::{EditableTask, task_list_for_project::TaskListForProject},
+    components::{EditableTask, spacing, task_list_for_project::TaskListForProject},
     models::{Project, Task, TaskStatus},
 };
 
@@ -9,7 +9,6 @@ pub struct TaskListForStatus {
     pub projects: Vec<Project>,
     pub selected_project: usize,
     pub project_filter: Option<usize>,
-    left_padding: u16,
 }
 
 impl TaskListForStatus {
@@ -27,7 +26,7 @@ impl TaskListForStatus {
                         let mut tasks: Vec<_> = tasks
                             .iter()
                             .filter(|task| task.status == task_status && task.project_id == project.id)
-                            .map(|task| EditableTask::from_day_task(task))
+                            .map(EditableTask::from_day_task)
                             .collect();
 
                         if tasks.is_empty() {
@@ -47,18 +46,22 @@ impl TaskListForStatus {
                 projects: projects.clone(),
                 selected_project: 0,
                 project_filter: None,
-                left_padding: 1,
             })
             .collect()
     }
 
-    pub fn left_padding(&self) -> u16 {
+    /// Indentation of the projects, in pixels.
+    pub fn left_padding(&self) -> f64 {
         let render_left_border = self.project_filter.is_none();
         if render_left_border {
-            self.left_padding + 2
+            spacing::STATUS + spacing::STATUS_LINE
         } else {
-            self.left_padding
+            spacing::STATUS
         }
+    }
+
+    pub fn editing_task_mut(&mut self) -> Option<&mut EditableTask> {
+        self.tasks_by_project.iter_mut().find_map(|p| p.editing_task_mut())
     }
 
     pub fn height(&self) -> usize {
