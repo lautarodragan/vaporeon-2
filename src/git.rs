@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use chrono::Utc;
+use chrono::Local;
 
 #[derive(Debug)]
 #[allow(unused)]
@@ -66,7 +66,7 @@ pub fn add(path: &Path) -> Result<(), GitError> {
 }
 
 pub fn commit(path: &Path) -> Result<(), GitError> {
-    let date = Utc::now().to_string();
+    let date = Local::now().to_rfc3339();
     let message = "automated vaporeon commit at ".to_string() + date.as_str();
     let output = run_git(path, [
         "commit",

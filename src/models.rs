@@ -3,7 +3,7 @@ use std::{
     path::Path,
 };
 
-use chrono::{NaiveDate, Utc};
+use chrono::{Local, NaiveDate};
 use serde::{Deserialize, Serialize};
 
 use crate::toml_io::{TomlFileError, read_toml_file_path};
@@ -35,7 +35,7 @@ pub struct Day {
 impl Default for Day {
     fn default() -> Self {
         Self {
-            date_time: Utc::now().date_naive(),
+            date_time: Local::now().date_naive(),
             tasks: vec![],
         }
     }
@@ -66,7 +66,7 @@ impl Day {
 
     pub fn example() -> Self {
         Day {
-            date_time: Utc::now().date_naive(),
+            date_time: Local::now().date_naive(),
             tasks: vec![
                 Task {
                     text: "do the dishes".to_string(),

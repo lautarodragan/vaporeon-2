@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use chrono::{Datelike, NaiveDate, Utc, Weekday};
+use chrono::{Datelike, Local, NaiveDate, Weekday};
 
 use super::{RightPanel, Root};
 use crate::{
@@ -116,7 +116,7 @@ impl Root {
 
 fn render_week_quick_view(canvas: &Canvas, selected_date: NaiveDate, area: Rect) {
     let theme = canvas.theme;
-    let now = Utc::now().date_naive();
+    let now = Local::now().date_naive();
     let selected_day = selected_date.weekday();
     let selected_date_week_ordering = selected_date.iso_week().cmp(&now.iso_week());
 

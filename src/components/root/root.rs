@@ -1,6 +1,6 @@
 use std::{fs::remove_file, io::ErrorKind};
 
-use chrono::{Days, NaiveDate, Utc};
+use chrono::{Days, Local, NaiveDate};
 
 use crate::{
     components::{
@@ -35,7 +35,7 @@ impl Root {
             task_details: TaskDetails::new(),
             settings,
             selected_panel: 0,
-            selected_date: Utc::now().date_naive(),
+            selected_date: Local::now().date_naive(),
             selected_status_list: 0,
             left_padding: 2,
             project_filter: None,
@@ -160,7 +160,7 @@ impl Root {
     }
 
     pub fn go_to_today(&mut self) {
-        let next = Utc::now().date_naive();
+        let next = Local::now().date_naive();
         self.save();
         self.selected_date = next;
         self.load_selected_day();
