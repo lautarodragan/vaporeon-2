@@ -1,0 +1,35 @@
+# Copy this file to ~/.config/vaporeon/theme.toml and change whatever you want.
+# Any value missing from your file falls back to the one in here.
+#
+# Colors are "#rrggbb" or "#rrggbbaa".
+
+list_header = "#d79921"
+list_entry = "#ebdbb2"
+list_decoration = "#975900"
+list_left_line = "#975900"
+caret = "#ebdbb2"
+
+background = "#282828"
+background_selected = "#3c3836"
+
+# 0.0 = fully transparent, 1.0 = fully opaque.
+# Only the background is affected; text is always drawn opaque.
+# Your compositor (e.g. Hyprland) may additionally blur whatever is behind the window.
+background_opacity = 0.75
+
+# Any Pango font description: "<family> [style] <size>".
+# For example "Iosevka Term 14", "JetBrains Mono Bold 12", or just "Monospace 13".
+font = "Monospace 13"
+
+# Row height, as a multiple of the font's line height.
+line_height = 1.3
+
+# Whether the window should have a title bar / borders drawn by GTK.
+# Tiling compositors (Hyprland, Sway, etc.) usually look better without them.
+window_decorations = false
+
+# white "#ebdbb2"
+# red "#fb4934"
+# green "#8ec07c"
+# orange d79921
+# dark gray 282828

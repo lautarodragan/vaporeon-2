@@ -1,0 +1,268 @@
+use std::{fs::remove_file, io::ErrorKind};
+
+use chrono::{Days, NaiveDate, Utc};
+
+use crate::{
+    components::{
+        EditableTask,
+        task_details::TaskDetails,
+        task_list::TaskList,
+        task_list_for_status::TaskListForStatus,
+    },
+    git,
+    models::{Day, TaskStatus},
+    settings::Settings,
+};
+
+pub struct Root {
+    pub(super) settings: Settings,
+    pub(super) task_list_day: TaskList,
+    pub(super) task_list_global: TaskList,
+    pub(super) task_details: TaskDetails,
+    pub(super) right_panel: RightPanel,
+    pub(super) selected_panel: usize, // 0 = selected day, 1 = global
+    pub(super) selected_date: NaiveDate,
+    pub(super) selected_status_list: usize,
+    pub(super) left_padding: u16,
+    pub(super) project_filter: Option<usize>,
+}
+
+impl Root {
+    pub fn new(settings: Settings) -> Self {
+        Self {
+            task_list_day: TaskList::new(settings.clone()),
+            task_list_global: TaskList::new(settings.clone()),
+            task_details: TaskDetails::new(),
+            settings,
+            selected_panel: 0,
+            selected_date: Utc::now().date_naive(),
+            selected_status_list: 0,
+            left_padding: 2,
+            project_filter: None,
+            right_panel: RightPanel::Nothing,
+        }
+    }
+
+    pub fn is_editing(&self) -> bool {
+        self.task_list_day.is_editing() || self.task_list_global.is_editing() || self.task_details.is_editing()
+    }
+
+    fn file_name(&self) -> String {
+        self.selected_date.format("%Y-%m-%d").to_string()
+    }
+
+    pub fn to_day(&self) -> Day {
+        let day = self.task_list_day.to_day();
+        Day {
+            date_time: self.selected_date,
+            ..day
+        }
+    }
+
+    pub fn to_day_global(&self) -> Day {
+        self.task_list_global.to_day()
+    }
+
+    pub fn load_selected_day(&mut self) {
+        let file_name = self.file_name();
+        let path = self.settings.storage_path.join(file_name + ".toml");
+        self.task_list_day.load_file(path.as_path());
+    }
+
+    pub fn load_from_template(&mut self) {
+        let file_name = "template".to_string();
+        let path = self.settings.storage_path.join(file_name + ".toml");
+        self.task_list_day.load_file(path.as_path());
+    }
+
+    pub fn load_global(&mut self) {
+        let file_name = "global".to_string();
+        let path = self.settings.storage_path.join(file_name + ".toml");
+        self.task_list_global.load_file(path.as_path());
+    }
+
+    pub fn save(&self) {
+        let file_name = self.file_name();
+
+        if self.task_list_day.is_empty() {
+            log::debug!("{file_name} is empty. Skipping save.");
+            let file_name = file_name + ".toml";
+            if let Err(err) = remove_file(self.settings.storage_path.as_path().join(file_name.as_str())) {
+                if err.kind() != ErrorKind::NotFound {
+                    log::warn!("Tried to delete file {file_name} and failed miserably. {err:?}");
+                }
+            }
+        } else {
+            let day = self.to_day();
+            if let Err(err) = day.to_file(self.settings.storage_path.as_path(), file_name) {
+                log::error!("Failed to save file! {err:?}");
+            };
+        }
+
+        let git_date = git::date_of_most_recent_commit(self.settings.storage_path.as_path());
+        log::debug!("git date: {git_date:?}");
+        let git_add_result = git::add(self.settings.storage_path.as_path());
+        log::debug!("git add output: {git_add_result:?}");
+        let git_commit_result = git::commit(self.settings.storage_path.as_path());
+        log::debug!("git commit result: {git_commit_result:?}");
+    }
+
+    pub fn save_as_template(&self) {
+        let file_name = "template".to_string();
+        log::debug!("Want to save {file_name}...");
+
+        if self.task_list_day.is_empty() {
+            log::debug!("{file_name} is empty. Skipping save.");
+            let file_name = file_name + ".toml";
+            if let Err(err) = remove_file(self.settings.storage_path.as_path().join(file_name.as_str())) {
+                if err.kind() != ErrorKind::NotFound {
+                    log::warn!("Tried to delete file {file_name} and failed miserably. {err:?}");
+                }
+            }
+        } else {
+            let day = self.to_day();
+            if let Err(err) = day.to_file(self.settings.storage_path.as_path(), file_name) {
+                log::error!("Failed to save file! {err:?}");
+            };
+        }
+    }
+
+    pub fn save_global(&self) {
+        let file_name = "global".to_string();
+        log::debug!("Want to save {file_name}...");
+
+        let day = self.to_day_global();
+        if let Err(err) = day.to_file(self.settings.storage_path.as_path(), file_name) {
+            log::error!("Failed to save file! {err:?}");
+        };
+    }
+
+    pub fn go_to_next_day(&mut self) {
+        let Some(next) = self.selected_date.checked_add_days(Days::new(1)) else {
+            log::error!("Failed to selected_date.checked_add_days(1)");
+            return;
+        };
+        self.save();
+        self.selected_date = next;
+        self.load_selected_day();
+        self.on_selection_change();
+    }
+
+    pub fn go_to_previous_day(&mut self) {
+        let Some(next) = self.selected_date.checked_sub_days(Days::new(1)) else {
+            log::error!("Failed to selected_date.checked_sub_days(1)");
+            return;
+        };
+        self.save();
+        self.selected_date = next;
+        self.load_selected_day();
+        self.on_selection_change();
+    }
+
+    pub fn go_to_today(&mut self) {
+        let next = Utc::now().date_naive();
+        self.save();
+        self.selected_date = next;
+        self.load_selected_day();
+        self.on_selection_change();
+    }
+
+    pub fn copy_previous_day_todo_and_doing(&mut self) {
+        let Some(previous) = self.selected_date.checked_sub_days(Days::new(1)) else {
+            log::error!("Failed to selected_date.checked_sub_days(1)");
+            return;
+        };
+
+        let file_name = previous.format("%Y-%m-%d").to_string();
+        let path = self.settings.storage_path.join(file_name + ".toml");
+        let day = Day::from_file_or_default(path.as_path());
+
+        for task in day.tasks {
+            if task.text.trim().is_empty() {
+                continue;
+            }
+
+            let tasks_by_status = if task.status == TaskStatus::ToDo {
+                &mut self.task_list_day.status_lists_mut()[0]
+            } else if task.status == TaskStatus::Doing {
+                &mut self.task_list_day.status_lists_mut()[1]
+            } else {
+                continue;
+            };
+
+            let Some(project) = tasks_by_status
+                .tasks_by_project
+                .iter_mut()
+                .find(|p| p.project_id == task.project_id)
+            else {
+                log::warn!("Could not find project with id {}", task.project_id);
+                continue;
+            };
+
+            if project.tasks.iter().any(|t| t.as_str() == task.text.as_str()) {
+                continue;
+            }
+
+            let new_task = EditableTask::new(task.text, task.details.unwrap_or_default());
+            let empty_index = project
+                .tasks
+                .iter()
+                .enumerate()
+                .rfind(|(_, e)| e.is_empty())
+                .map(|(i, _)| i);
+
+            if let Some(empty_index) = empty_index {
+                project.tasks.insert(empty_index, new_task);
+            } else {
+                project.tasks.push(new_task);
+            }
+        }
+    }
+
+    /// Number of task-list rows that fit on screen. Used to keep the selected task visible when scrolling.
+    pub fn set_visible_rows(&mut self, rows: usize) {
+        self.task_list_day.set_height(rows);
+        self.task_list_global.set_height(rows);
+    }
+
+    pub fn refresh_scroll(&mut self) {
+        self.task_list_day.refresh_scroll();
+        self.task_list_global.refresh_scroll();
+    }
+
+    pub fn set_filter(&mut self, project_index: Option<usize>) {
+        // Ignore filters that point past the number of visible projects, so e.g.
+        // pressing the "filter project 4" key with fewer projects is a no-op
+        // rather than an out-of-bounds panic.
+        if let Some(i) = project_index
+            && i >= self.settings.visible_projects().len()
+        {
+            return;
+        }
+        self.project_filter = project_index;
+        self.task_list_day.set_filter(project_index);
+        self.task_list_global.set_filter(project_index);
+        self.on_selection_change();
+    }
+
+    pub fn selected_status_mut(&mut self) -> &mut TaskListForStatus {
+        self.task_list_day.selected_status_mut()
+    }
+
+    pub fn selected_task_mut(&mut self) -> &mut EditableTask {
+        self.selected_status_mut().selected_project_mut().selected_task_mut()
+    }
+
+    pub(super) fn on_selection_change(&mut self) {
+        let task = self.task_list_day.selected_status().selected_task();
+        self.task_details.set_title(task.title());
+        self.task_details.set_description(task.description());
+    }
+}
+
+#[derive(PartialEq, Eq)]
+pub enum RightPanel {
+    Nothing,
+    GlobalTaskList,
+    TaskDetails,
+}

@@ -1,0 +1,7 @@
+- feat: filter by status (show all projects in DONE for the day — similar to showing all tasks of a single project)
+- feat: day free-text notes (a .txt file for each day, basically)
+- feat: task details
+- fix: honor max task-list width when rendering text
+- fix: refresh scroll cuando cambio proyectos
+- fix: right-padding (off-by-1)
+- feat: linking tasks between days?
