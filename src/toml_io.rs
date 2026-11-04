@@ -49,15 +49,21 @@ impl From<toml::ser::Error> for TomlFileError {
     }
 }
 
-fn get_config_dir_path() -> Result<PathBuf, TomlFileError> {
-    // TODO: XDG_CONFIG_HOME
-    home::home_dir()
-        .map(|path| path.as_path().join(".config/vaporeon"))
+/// `$XDG_CONFIG_HOME/vaporeon`, or `~/.config/vaporeon` if `XDG_CONFIG_HOME` isn't set.
+pub fn get_config_dir_path() -> Result<PathBuf, TomlFileError> {
+    config_dir_path(std::env::var_os("XDG_CONFIG_HOME"), home::home_dir())
         .ok_or(TomlFileError::NoPath(".config/vaporeon".to_string()))
 }
 
+fn config_dir_path(xdg_config_home: Option<std::ffi::OsString>, home: Option<PathBuf>) -> Option<PathBuf> {
+    // Per the XDG spec, relative paths are invalid and must be ignored.
+    let xdg_config_home = xdg_config_home.map(PathBuf::from).filter(|path| path.is_absolute());
+    xdg_config_home
+        .or_else(|| home.map(|home| home.join(".config")))
+        .map(|config| config.join("vaporeon"))
+}
+
 pub fn get_config_file_path(file_name: &str) -> Result<PathBuf, TomlFileError> {
-    // TODO: XDG_CONFIG_HOME
     get_config_dir_path().map(|path| path.as_path().join(file_name).with_extension("toml"))
 }
 
@@ -102,4 +108,31 @@ where
     let serialized = toml::to_string_pretty(file_contents)?;
     write(path, serialized)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_dir_respects_xdg_config_home() {
+        let home = Some(PathBuf::from("/home/taro"));
+        assert_eq!(
+            config_dir_path(Some("/xdg/config".into()), home.clone()),
+            Some(PathBuf::from("/xdg/config/vaporeon"))
+        );
+        assert_eq!(
+            config_dir_path(None, home.clone()),
+            Some(PathBuf::from("/home/taro/.config/vaporeon"))
+        );
+        // Empty or relative: ignored.
+        assert_eq!(
+            config_dir_path(Some("".into()), home.clone()),
+            Some(PathBuf::from("/home/taro/.config/vaporeon"))
+        );
+        assert_eq!(
+            config_dir_path(Some("relative".into()), home),
+            Some(PathBuf::from("/home/taro/.config/vaporeon"))
+        );
+    }
 }

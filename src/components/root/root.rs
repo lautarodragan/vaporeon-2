@@ -132,34 +132,36 @@ impl Root {
         };
     }
 
+    pub fn selected_date(&self) -> NaiveDate {
+        self.selected_date
+    }
+
+    /// Saves the current day, and loads another one.
+    pub fn go_to_date(&mut self, date: NaiveDate) {
+        self.save();
+        self.selected_date = date;
+        self.load_selected_day();
+        self.on_selection_change();
+    }
+
     pub fn go_to_next_day(&mut self) {
         let Some(next) = self.selected_date.checked_add_days(Days::new(1)) else {
             log::error!("Failed to selected_date.checked_add_days(1)");
             return;
         };
-        self.save();
-        self.selected_date = next;
-        self.load_selected_day();
-        self.on_selection_change();
+        self.go_to_date(next);
     }
 
     pub fn go_to_previous_day(&mut self) {
-        let Some(next) = self.selected_date.checked_sub_days(Days::new(1)) else {
+        let Some(previous) = self.selected_date.checked_sub_days(Days::new(1)) else {
             log::error!("Failed to selected_date.checked_sub_days(1)");
             return;
         };
-        self.save();
-        self.selected_date = next;
-        self.load_selected_day();
-        self.on_selection_change();
+        self.go_to_date(previous);
     }
 
     pub fn go_to_today(&mut self) {
-        let next = Local::now().date_naive();
-        self.save();
-        self.selected_date = next;
-        self.load_selected_day();
-        self.on_selection_change();
+        self.go_to_date(Local::now().date_naive());
     }
 
     pub fn copy_previous_day_todo_and_doing(&mut self) {

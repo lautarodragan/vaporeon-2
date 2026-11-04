@@ -22,7 +22,7 @@ use gtk::{glib, prelude::*};
 use crate::{
     AppRef,
     canvas::{Canvas, Metrics},
-    components::root::{HEADER_ROWS, Panel, RightPanel, TaskPosition},
+    components::root::{HEADER_ROWS, HeaderLink, Panel, RightPanel, TaskPosition},
     theme::Theme,
     view::{
         details_view::DetailsView,
@@ -49,6 +49,7 @@ pub struct Ui {
     css: gtk::CssProvider,
     metrics: Cell<Metrics>,
     refresh_scheduled: Cell<bool>,
+    refresh_scroll: Cell<bool>,
 }
 
 impl Ui {
@@ -63,7 +64,7 @@ impl Ui {
                 let ui = ui.clone();
                 Rc::new(move |text| {
                     app.borrow_mut().root.set_editing_text(text);
-                    schedule_refresh(&ui, &app);
+                    schedule_refresh(&ui, &app, false);
                 })
             };
 
@@ -74,7 +75,7 @@ impl Ui {
                     app.borrow_mut()
                         .root
                         .click_task(panel, status, project, task, n_press >= 2);
-                    schedule_refresh(&ui, &app);
+                    schedule_refresh(&ui, &app, false);
                 })
             };
 
@@ -83,7 +84,7 @@ impl Ui {
                 let ui = ui.clone();
                 Rc::new(move || {
                     app.borrow_mut().root.click_details();
-                    schedule_refresh(&ui, &app);
+                    schedule_refresh(&ui, &app, false);
                 })
             };
 
@@ -136,7 +137,7 @@ impl Ui {
                             None => app.borrow_mut().root.insert_dropped_text(to, &text),
                         };
                         // Not right away: the dragged row may be removed when refreshing.
-                        schedule_refresh(&ui, &app);
+                        schedule_refresh(&ui, &app, false);
                         dropped
                     })
                 },
@@ -189,19 +190,23 @@ impl Ui {
             panels.append(&right_stack);
 
             let header = gtk::DrawingArea::builder().hexpand(true).focusable(true).build();
+            // Clickable parts of the header, as of the last time it was drawn.
+            let links: Rc<RefCell<Vec<HeaderLink>>> = Rc::new(RefCell::new(vec![]));
             header.set_draw_func({
                 let app = app.clone();
+                let links = links.clone();
                 move |area, cr, width, _height| {
                     let app = app.borrow();
                     let canvas = Canvas::new(cr, &area.pango_context(), &app.theme, width as f64);
-                    app.root.render_header(&canvas);
+                    *links.borrow_mut() = app.root.render_header(&canvas);
                 }
             });
+            add_header_links(&header, links, app, ui);
             // Whether there's room for both panels depends on the width.
             header.connect_resize({
                 let app = app.clone();
                 let ui = ui.clone();
-                move |_, _, _| schedule_refresh(&ui, &app)
+                move |_, _, _| schedule_refresh(&ui, &app, false)
             });
 
             let main_box = gtk::Box::builder()
@@ -234,6 +239,7 @@ impl Ui {
                 css,
                 metrics: Cell::new(metrics),
                 refresh_scheduled: Cell::new(false),
+                refresh_scroll: Cell::new(false),
             }
         })
     }
@@ -305,16 +311,65 @@ impl Ui {
 
 /// Refreshes the UI as soon as GTK is idle. Used from signal handlers (clicks, text changes), where the widgets
 /// emitting the signal shouldn't be removed or rebuilt in the middle of it.
-fn schedule_refresh(ui: &Weak<Ui>, app: &AppRef) {
+///
+/// `scroll`: see [`Ui::refresh`].
+fn schedule_refresh(ui: &Weak<Ui>, app: &AppRef, scroll: bool) {
     let Some(ui) = ui.upgrade() else { return };
+    if scroll {
+        ui.refresh_scroll.set(true);
+    }
     if ui.refresh_scheduled.replace(true) {
         return;
     }
     let app = app.clone();
     glib::idle_add_local_once(move || {
         ui.refresh_scheduled.set(false);
-        ui.refresh(&app, false);
+        ui.refresh(&app, ui.refresh_scroll.replace(false));
     });
+}
+
+/// Clicking a day in the header goes to that day. The pointer becomes a hand over them.
+fn add_header_links(header: &gtk::DrawingArea, links: Rc<RefCell<Vec<HeaderLink>>>, app: &AppRef, ui: &Weak<Ui>) {
+    let link_at = {
+        let links = links.clone();
+        move |x: f64| {
+            links
+                .borrow()
+                .iter()
+                .find(|link| x >= link.x.0 && x < link.x.1)
+                .copied()
+        }
+    };
+
+    let click = gtk::GestureClick::new();
+    click.connect_pressed({
+        let app = app.clone();
+        let ui = ui.clone();
+        let link_at = link_at.clone();
+        move |_, _, x, _| {
+            let Some(link) = link_at(x) else { return };
+            {
+                let mut app = app.borrow_mut();
+                app.root.finish_editing();
+                if app.root.selected_date() != link.date {
+                    app.root.go_to_date(link.date);
+                }
+            }
+            schedule_refresh(&ui, &app, true);
+        }
+    });
+    header.add_controller(click);
+
+    let motion = gtk::EventControllerMotion::new();
+    motion.connect_motion({
+        let header = header.downgrade();
+        move |_, x, _| {
+            let Some(header) = header.upgrade() else { return };
+            let cursor = link_at(x).map(|_| "pointer");
+            header.set_cursor_from_name(cursor);
+        }
+    });
+    header.add_controller(motion);
 }
 
 fn add_panel_click(widget: &impl IsA<gtk::Widget>, panel: Panel, app: &AppRef, ui: &Weak<Ui>) {
@@ -328,7 +383,7 @@ fn add_panel_click(widget: &impl IsA<gtk::Widget>, panel: Panel, app: &AppRef, u
                 app.root.finish_editing();
                 app.root.focus_panel(panel);
             }
-            schedule_refresh(&ui, &app);
+            schedule_refresh(&ui, &app, false);
         }
     });
     widget.add_controller(click);

@@ -10,7 +10,7 @@ use std::{
 use gtk::gdk;
 use strum::EnumString;
 
-use crate::toml_io::TomlFileError;
+use crate::toml_io::{TomlFileError, get_config_dir_path};
 
 static DEFAULT_ACTIONS_STR: &str = include_str!("../assets/actions.ini");
 static DEFAULT_ACTIONS: LazyLock<HashMap<KeyBinding, Vec<Action>>> =
@@ -310,11 +310,8 @@ impl Actions {
     }
 
     pub fn path() -> PathBuf {
-        home::home_dir()
-            .unwrap_or(PathBuf::from("~"))
-            .as_path()
-            .join(".config")
-            .join("vaporeon")
+        get_config_dir_path()
+            .unwrap_or_else(|_| PathBuf::from("~/.config/vaporeon"))
             .join("actions.ini")
     }
 

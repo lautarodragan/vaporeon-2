@@ -3,14 +3,20 @@
 Bullet Journal and stuff. GTK 4 port of [vaporeon](https://github.com/lautarodragan/vaporeon) (which was a terminal app).
 
 Everything works the same as in the terminal version: same keyboard shortcuts, same files.
-It reads and writes the same `~/.config/vaporeon/settings.toml`, `~/.config/vaporeon/actions.ini`
-and the day files in `storage_path` (`~/vaporeon` by default), so both versions can be used interchangeably.
+It reads and writes the same `settings.toml` and `actions.ini` (in `$XDG_CONFIG_HOME/vaporeon`, which is
+`~/.config/vaporeon` by default) and the day files in `storage_path` (`~/vaporeon` by default), so both versions can be used interchangeably.
+
+## Saving
+
+The day is saved (and committed, if `storage_path` is a git repository) with `Ctrl+S`, when going to another day,
+and when closing the window.
 
 ## Mouse
 
 Everything can still be done with the keyboard, but you can also:
 
 - click a task to select it,
+- click a day of the week, in the header, to go to that day (or the arrows, to go back to today),
 - double click a task to edit it,
 - click a task's description, in the details panel (`D`), to edit it,
 - scroll with the mouse wheel or touchpad,
@@ -57,7 +63,8 @@ Hyprland (or any compositor with blur) will blur what's behind the window as usu
 
 ## Theme
 
-Copy [`assets/theme.toml`](assets/theme.toml) to `~/.config/vaporeon/theme.toml` and edit it.
+Copy [`assets/theme.toml`](assets/theme.toml) to `~/.config/vaporeon/theme.toml` (or `$XDG_CONFIG_HOME/vaporeon/theme.toml`)
+and edit it.
 Any value you leave out falls back to the default, so you can also just write the ones you want to change:
 
 ```toml

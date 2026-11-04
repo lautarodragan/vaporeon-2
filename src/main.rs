@@ -107,7 +107,10 @@ fn build_ui(application: &gtk::Application) {
     window.connect_close_request({
         let app = app.clone();
         move |_| {
-            let app = app.borrow();
+            let mut app = app.borrow_mut();
+            // Whatever is being edited is kept, as if confirmed.
+            app.root.finish_editing();
+            app.root.save();
             app.root.save_global();
             app.settings.save();
             glib::Propagation::Proceed
