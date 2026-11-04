@@ -94,6 +94,70 @@ impl TaskList {
         !self.status_lists.iter().any(|tbs| !tbs.is_empty())
     }
 
+    /// Removes a task, returning its title and description. Returns None if there's no such task, or if it's empty.
+    ///
+    /// If it's the only task in its project, it's left in place but emptied, since every project shows at least one
+    /// (possibly empty) task.
+    pub fn take_task(&mut self, status: usize, project: usize, task: usize) -> Option<(String, String)> {
+        let project = self.status_lists.get_mut(status)?.tasks_by_project.get_mut(project)?;
+        if project.tasks.get(task)?.is_empty() {
+            return None;
+        }
+
+        if project.tasks.len() == 1 {
+            let task = &mut project.tasks[0];
+            return Some((task.take_title(), task.take_description()));
+        }
+
+        let removed = project.tasks.remove(task);
+        if project.selected_task > task || project.selected_task >= project.tasks.len() {
+            project.selected_task = project.selected_task.saturating_sub(1);
+        }
+        Some(removed.into_parts())
+    }
+
+    /// Inserts a task at `index` (clamped to the number of tasks) and selects it.
+    /// If the project only has an empty placeholder task, that one is replaced instead.
+    /// Returns false if there's no such status or project.
+    pub fn insert_task(
+        &mut self,
+        status: usize,
+        project: usize,
+        index: usize,
+        title: String,
+        description: String,
+    ) -> bool {
+        let Some(project_list) = self
+            .status_lists
+            .get_mut(status)
+            .and_then(|list| list.tasks_by_project.get_mut(project))
+        else {
+            return false;
+        };
+
+        let index = if let [only] = project_list.tasks.as_mut_slice()
+            && only.is_empty()
+            && only.description().trim().is_empty()
+        {
+            only.set_title(title);
+            only.set_description(description);
+            0
+        } else {
+            let index = index.min(project_list.tasks.len());
+            project_list.tasks.insert(index, EditableTask::new(title, description));
+            index
+        };
+
+        self.select(status, project, index)
+    }
+
+    /// Whether there is such a status and project.
+    pub fn has_project(&self, status: usize, project: usize) -> bool {
+        self.status_lists
+            .get(status)
+            .is_some_and(|list| project < list.tasks_by_project.len())
+    }
+
     /// Row (counting from the top of the list) of the selected task.
     pub fn cursor_y(&self) -> usize {
         self.status_lists

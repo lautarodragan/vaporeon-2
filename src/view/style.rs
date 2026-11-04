@@ -161,6 +161,15 @@ window.vaporeon .tasks.indented {{
     margin-left: {PROJECT_INDENT}px;
 }}
 
+/* Where a dragged task would be dropped. */
+window.vaporeon .task.drop-above {{
+    box-shadow: inset 0 2px {header};
+}}
+
+window.vaporeon .task.drop-below {{
+    box-shadow: inset 0 -2px {header};
+}}
+
 window.vaporeon .task.selected > label.title {{
     text-decoration-line: underline;
 }}

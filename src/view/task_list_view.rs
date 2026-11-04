@@ -4,9 +4,12 @@
 //! when the structure changes (tasks added, removed or moved, another day loaded, a different filter...) the rows
 //! are rebuilt; otherwise the existing rows are updated in place (texts, selection, editing).
 
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
-use gtk::prelude::*;
+use gtk::{gdk, glib, prelude::*};
 
 use crate::{
     components::{EditableTask, task_list::TaskList},
@@ -18,6 +21,18 @@ use crate::{
 pub type OnTaskClick = Rc<dyn Fn(usize, usize, usize, i32)>;
 /// Called with the new text, every time the text of the task being edited changes.
 pub type OnEdit = Rc<dyn Fn(String)>;
+
+/// Drag and drop of tasks.
+pub struct DragAndDrop {
+    /// Called when starting to drag a task (status, project, task). Returns the text to drag (its title),
+    /// or None if the task can't be dragged.
+    pub prepare: Rc<dyn Fn(usize, usize, usize) -> Option<String>>,
+    /// Called when text is dropped on a row (status, project, position between rows, text).
+    /// The text is either a task being moved, or comes from another application.
+    pub drop: Rc<dyn Fn(usize, usize, usize, String) -> bool>,
+    /// Called when a drag ends, whether it was dropped or not.
+    pub end: Rc<dyn Fn()>,
+}
 
 /// How many rows to keep visible above and below the selected task, when moving the selection with the keyboard.
 const SCROLL_PADDING_ROWS: f64 = 5.0;
@@ -56,7 +71,7 @@ struct TaskRow {
 }
 
 impl TaskRow {
-    fn new(on_click: impl Fn(i32) + 'static) -> Self {
+    fn new(status: usize, project: usize, task: usize, on_click: OnTaskClick, dnd: &DragAndDrop) -> Self {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         row.add_css_class("row");
         row.add_css_class("task");
@@ -80,9 +95,79 @@ impl TaskRow {
         click.connect_pressed(move |gesture, n_press, _, _| {
             // So the panel's own click handler doesn't run too.
             gesture.set_state(gtk::EventSequenceState::Claimed);
-            on_click(n_press);
+            on_click(status, project, task, n_press);
         });
-        row.add_controller(click);
+        row.add_controller(click.clone());
+
+        // Dragging this task.
+        let drag = gtk::DragSource::builder().actions(gdk::DragAction::MOVE).build();
+        let hotspot = Rc::new(Cell::new((0, 0)));
+        drag.connect_prepare({
+            let prepare = dnd.prepare.clone();
+            let hotspot = hotspot.clone();
+            move |_, x, y| {
+                let text = prepare(status, project, task)?;
+                hotspot.set((x as i32, y as i32));
+                Some(gdk::ContentProvider::for_value(&text.to_value()))
+            }
+        });
+        drag.connect_drag_begin({
+            let row = row.downgrade();
+            move |drag, _| {
+                // The row itself is what's shown under the pointer while dragging.
+                let (x, y) = hotspot.get();
+                let paintable = gtk::WidgetPaintable::new(row.upgrade().as_ref());
+                drag.set_icon(Some(&paintable), x, y);
+            }
+        });
+        drag.connect_drag_end({
+            let end = dnd.end.clone();
+            move |_, _, _| end()
+        });
+        row.add_controller(drag.clone());
+        // Both gestures work on the same clicks: the click selects the task, then dragging moves it.
+        click.group_with(&drag);
+
+        // Dropping on this task: above it if dropped on its top half, below it otherwise.
+        let target = gtk::DropTarget::new(glib::Type::STRING, gdk::DragAction::MOVE | gdk::DragAction::COPY);
+        target.connect_motion({
+            let row = row.downgrade();
+            move |target, _, y| {
+                if let Some(row) = row.upgrade() {
+                    show_drop_indicator(&row, Some(y < row.height() as f64 / 2.0));
+                }
+                // Tasks dragged within the app are moved. Text from other apps is copied.
+                let actions = target
+                    .current_drop()
+                    .map(|d| d.actions())
+                    .unwrap_or(gdk::DragAction::MOVE);
+                if actions.contains(gdk::DragAction::MOVE) {
+                    gdk::DragAction::MOVE
+                } else {
+                    gdk::DragAction::COPY
+                }
+            }
+        });
+        target.connect_leave({
+            let row = row.downgrade();
+            move |_| {
+                if let Some(row) = row.upgrade() {
+                    show_drop_indicator(&row, None);
+                }
+            }
+        });
+        target.connect_drop({
+            let row = row.downgrade();
+            let drop = dnd.drop.clone();
+            move |_, value, _, y| {
+                let Some(row) = row.upgrade() else { return false };
+                show_drop_indicator(&row, None);
+                let Ok(text) = value.get::<String>() else { return false };
+                let before = y < row.height() as f64 / 2.0;
+                drop(status, project, if before { task } else { task + 1 }, text)
+            }
+        });
+        row.add_controller(target);
 
         Self {
             row,
@@ -156,11 +241,12 @@ pub struct TaskListView {
     row_height: Rc<Cell<f64>>,
     on_task_click: OnTaskClick,
     on_edit: OnEdit,
+    dnd: DragAndDrop,
     syncing: Rc<Cell<bool>>,
 }
 
 impl TaskListView {
-    pub fn new(on_task_click: OnTaskClick, on_edit: OnEdit, syncing: Rc<Cell<bool>>) -> Self {
+    pub fn new(on_task_click: OnTaskClick, on_edit: OnEdit, dnd: DragAndDrop, syncing: Rc<Cell<bool>>) -> Self {
         let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let scrolled = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
@@ -185,6 +271,8 @@ impl TaskListView {
             }
         });
 
+        setup_drag_autoscroll(&scrolled, row_height.clone());
+
         Self {
             scrolled,
             content,
@@ -195,6 +283,7 @@ impl TaskListView {
             row_height,
             on_task_click,
             on_edit,
+            dnd,
             syncing,
         }
     }
@@ -286,8 +375,7 @@ impl TaskListView {
 
                 let mut project_rows = vec![];
                 for t in 0..project.tasks.len() {
-                    let on_click = self.on_task_click.clone();
-                    let row = TaskRow::new(move |n_press| on_click(s, p, t, n_press));
+                    let row = TaskRow::new(s, p, t, self.on_task_click.clone(), &self.dnd);
                     tasks_box.append(&row.row);
                     project_rows.push(row);
                 }
@@ -321,6 +409,85 @@ fn header_row(text: &str) -> gtk::Label {
     label.add_css_class("row");
     label.add_css_class("header");
     label
+}
+
+/// While dragging a task near the top or bottom edge of the list, scrolls it, so tasks can be dragged to places
+/// that aren't visible.
+fn setup_drag_autoscroll(scrolled: &gtk::ScrolledWindow, row_height: Rc<Cell<f64>>) {
+    // Pixels to scroll per frame. Negative scrolls up.
+    let speed = Rc::new(Cell::new(0.0));
+    let timer: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
+
+    let stop = {
+        let speed = speed.clone();
+        let timer = timer.clone();
+        move || {
+            speed.set(0.0);
+            if let Some(timer) = timer.borrow_mut().take() {
+                timer.remove();
+            }
+        }
+    };
+
+    let motion = gtk::DropControllerMotion::new();
+    motion.connect_motion({
+        let scrolled = scrolled.downgrade();
+        let speed = speed.clone();
+        let timer = timer.clone();
+        let stop = stop.clone();
+        move |_, _, y| {
+            let Some(scrolled) = scrolled.upgrade() else { return };
+            let height = scrolled.height() as f64;
+            // Within 2 rows of an edge, scroll. The closer to the edge, the faster.
+            let edge = (row_height.get() * 2.0).min(height / 4.0);
+            let max_speed = row_height.get() / 2.0;
+            let new_speed = if y < edge {
+                -max_speed * (edge - y) / edge
+            } else if y > height - edge {
+                max_speed * (y - (height - edge)) / edge
+            } else {
+                0.0
+            };
+
+            if new_speed == 0.0 {
+                stop();
+                return;
+            }
+            speed.set(new_speed);
+
+            if timer.borrow().is_some() {
+                return;
+            }
+            let id = glib::timeout_add_local(std::time::Duration::from_millis(16), {
+                let scrolled = scrolled.downgrade();
+                let speed = speed.clone();
+                let timer = timer.clone();
+                move || {
+                    let Some(scrolled) = scrolled.upgrade() else {
+                        timer.borrow_mut().take();
+                        return glib::ControlFlow::Break;
+                    };
+                    let adjustment = scrolled.vadjustment();
+                    adjustment.set_value(adjustment.value() + speed.get());
+                    glib::ControlFlow::Continue
+                }
+            });
+            *timer.borrow_mut() = Some(id);
+        }
+    });
+    motion.connect_leave(move |_| stop());
+    scrolled.add_controller(motion);
+}
+
+/// Shows a line above (`Some(true)`) or below (`Some(false)`) a row, where a dragged task would be dropped.
+fn show_drop_indicator(row: &gtk::Box, above: Option<bool>) {
+    row.remove_css_class("drop-above");
+    row.remove_css_class("drop-below");
+    match above {
+        Some(true) => row.add_css_class("drop-above"),
+        Some(false) => row.add_css_class("drop-below"),
+        None => {}
+    }
 }
 
 fn empty_row() -> gtk::Box {

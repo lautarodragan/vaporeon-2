@@ -337,6 +337,95 @@ impl Root {
         self.on_selection_change();
     }
 
+    fn list_mut(&mut self, panel: Panel) -> Option<&mut TaskList> {
+        match panel {
+            Panel::Left => Some(&mut self.task_list_day),
+            Panel::Right if self.right_panel == RightPanel::GlobalTaskList => Some(&mut self.task_list_global),
+            Panel::Right => None,
+        }
+    }
+
+    pub fn list(&self, panel: Panel) -> Option<&TaskList> {
+        match panel {
+            Panel::Left => Some(&self.task_list_day),
+            Panel::Right if self.right_panel == RightPanel::GlobalTaskList => Some(&self.task_list_global),
+            Panel::Right => None,
+        }
+    }
+
+    /// Moves a task (drag and drop). It can go to another position in the same project, to another project or status,
+    /// or to the other panel.
+    ///
+    /// `to.task` is the position *between rows* where it was dropped, as seen on screen before moving: 0 is before
+    /// the first task, 1 is between the first and second task, etc.
+    ///
+    /// Returns false if nothing was moved (e.g. empty task, or positions out of range).
+    pub fn move_task(&mut self, from: TaskPosition, mut to: TaskPosition) -> bool {
+        self.finish_editing();
+
+        if !self
+            .list(to.panel)
+            .is_some_and(|list| list.has_project(to.status, to.project))
+        {
+            return false;
+        }
+
+        let Some(source) = self.list_mut(from.panel) else {
+            return false;
+        };
+        let tasks_before = source
+            .status_lists()
+            .get(from.status)
+            .and_then(|list| list.tasks_by_project.get(from.project))
+            .map(|project| project.tasks.len())
+            .unwrap_or(0);
+        let Some((title, description)) = source.take_task(from.status, from.project, from.task) else {
+            return false;
+        };
+
+        // If the task was removed from above the drop position, everything below it moved up one row.
+        let same_project = from.panel == to.panel && from.status == to.status && from.project == to.project;
+        if same_project && tasks_before > 1 && from.task < to.task {
+            to.task -= 1;
+        }
+
+        if let Some(target) = self.list_mut(to.panel) {
+            target.insert_task(to.status, to.project, to.task, title, description);
+        }
+
+        self.focus_panel(to.panel);
+        self.on_selection_change();
+        true
+    }
+
+    /// Adds a task with text dropped from another application. The first line is the title, the rest the description.
+    pub fn insert_dropped_text(&mut self, to: TaskPosition, text: &str) -> bool {
+        self.finish_editing();
+
+        let text = text.trim();
+        if text.is_empty() {
+            return false;
+        }
+        let (title, description) = text.split_once('\n').unwrap_or((text, ""));
+
+        let Some(target) = self.list_mut(to.panel) else {
+            return false;
+        };
+        if !target.insert_task(
+            to.status,
+            to.project,
+            to.task,
+            title.trim().to_string(),
+            description.trim().to_string(),
+        ) {
+            return false;
+        }
+
+        self.focus_panel(to.panel);
+        self.on_selection_change();
+        true
+    }
+
     /// Clicking on the description in the details panel starts editing it.
     pub fn click_details(&mut self) {
         if self.right_panel != RightPanel::TaskDetails || self.task_details.is_editing() {
@@ -356,6 +445,15 @@ pub enum EditTarget {
     TaskTitle,
     /// The description of a task, in the details panel. Multiple lines.
     TaskDetails,
+}
+
+/// The position of a task in one of the task lists.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct TaskPosition {
+    pub panel: Panel,
+    pub status: usize,
+    pub project: usize,
+    pub task: usize,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -407,6 +505,89 @@ mod tests {
         root.click_task(Panel::Right, 1, 0, 0, false);
         assert_eq!(root.selected_panel(), Panel::Left);
         assert_eq!(root.task_list_global.selected_status_index(), 0);
+    }
+
+    fn root_with_tasks() -> Root {
+        let mut root = Root::new(Settings::default());
+        // TODO, project 0: a, b, c. DONE, project 1: x.
+        for (status, project, title) in [(0, 0, "c"), (0, 0, "b"), (0, 0, "a"), (2, 1, "x")] {
+            root.task_list_day
+                .insert_task(status, project, 0, title.to_string(), String::new());
+        }
+        root
+    }
+
+    fn titles(root: &Root, status: usize, project: usize) -> Vec<String> {
+        root.task_list_day.status_lists()[status].tasks_by_project[project]
+            .tasks
+            .iter()
+            .map(|t| t.title().to_string())
+            .collect()
+    }
+
+    fn pos(status: usize, project: usize, task: usize) -> TaskPosition {
+        TaskPosition {
+            panel: Panel::Left,
+            status,
+            project,
+            task,
+        }
+    }
+
+    #[test]
+    fn move_down_and_up_within_a_project() {
+        let mut root = root_with_tasks();
+        // Drag "a" to between "b" and "c".
+        assert!(root.move_task(pos(0, 0, 0), pos(0, 0, 2)));
+        assert_eq!(titles(&root, 0, 0), ["b", "a", "c"]);
+        // Drag "c" to the top.
+        assert!(root.move_task(pos(0, 0, 2), pos(0, 0, 0)));
+        assert_eq!(titles(&root, 0, 0), ["c", "b", "a"]);
+        // Dropping right where it was does nothing.
+        assert!(root.move_task(pos(0, 0, 1), pos(0, 0, 2)));
+        assert_eq!(titles(&root, 0, 0), ["c", "b", "a"]);
+        // The moved task is selected.
+        assert_eq!(root.task_list_day.selected_status().selected_task().title(), "b");
+    }
+
+    #[test]
+    fn move_to_another_status_and_project() {
+        let mut root = root_with_tasks();
+        assert!(root.move_task(pos(0, 0, 1), pos(2, 1, 1)));
+        assert_eq!(titles(&root, 0, 0), ["a", "c"]);
+        assert_eq!(titles(&root, 2, 1), ["x", "b"]);
+        // Into an empty project: replaces its empty placeholder task.
+        assert!(root.move_task(pos(0, 0, 0), pos(1, 2, 0)));
+        assert_eq!(titles(&root, 1, 2), ["a"]);
+        // Moving the last task of a project leaves an empty placeholder behind.
+        assert!(root.move_task(pos(1, 2, 0), pos(0, 0, 0)));
+        assert_eq!(titles(&root, 1, 2), [""]);
+        assert_eq!(titles(&root, 0, 0), ["a", "c"]);
+    }
+
+    #[test]
+    fn empty_tasks_and_invalid_targets_are_not_moved() {
+        let mut root = root_with_tasks();
+        assert!(!root.move_task(pos(1, 0, 0), pos(0, 0, 0)));
+        assert!(!root.move_task(pos(0, 0, 0), pos(9, 0, 0)));
+        let to_hidden_panel = TaskPosition {
+            panel: Panel::Right,
+            ..pos(0, 0, 0)
+        };
+        assert!(!root.move_task(pos(0, 0, 0), to_hidden_panel));
+        assert_eq!(titles(&root, 0, 0), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn dropped_text_becomes_a_task() {
+        let mut root = root_with_tasks();
+        assert!(root.insert_dropped_text(pos(0, 0, 1), "  hola\nmundo\n "));
+        assert_eq!(titles(&root, 0, 0), ["a", "hola", "b", "c"]);
+        assert_eq!(
+            root.task_list_day.status_lists()[0].tasks_by_project[0].tasks[1].description(),
+            "mundo"
+        );
+        assert!(!root.insert_dropped_text(pos(0, 0, 0), "   "));
     }
 
     #[test]

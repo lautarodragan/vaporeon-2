@@ -22,12 +22,12 @@ use gtk::{glib, prelude::*};
 use crate::{
     AppRef,
     canvas::{Canvas, Metrics},
-    components::root::{HEADER_ROWS, Panel, RightPanel},
+    components::root::{HEADER_ROWS, Panel, RightPanel, TaskPosition},
     theme::Theme,
     view::{
         details_view::DetailsView,
         style::WINDOW_PADDING,
-        task_list_view::{OnEdit, OnTaskClick, TaskListView},
+        task_list_view::{DragAndDrop, OnEdit, OnTaskClick, TaskListView},
     },
 };
 
@@ -87,8 +87,77 @@ impl Ui {
                 })
             };
 
-            let day = TaskListView::new(on_task_click(Panel::Left), on_edit.clone(), syncing.clone());
-            let global = TaskListView::new(on_task_click(Panel::Right), on_edit.clone(), syncing.clone());
+            // The task being dragged, if the drag started in this app.
+            let dragged: Rc<Cell<Option<TaskPosition>>> = Rc::new(Cell::new(None));
+
+            let drag_and_drop = |panel: Panel| DragAndDrop {
+                prepare: {
+                    let app = app.clone();
+                    let dragged = dragged.clone();
+                    Rc::new(move |status, project, task| {
+                        let app = app.borrow();
+                        if app.root.editing().is_some() {
+                            return None;
+                        }
+                        let title = app
+                            .root
+                            .list(panel)?
+                            .status_lists()
+                            .get(status)?
+                            .tasks_by_project
+                            .get(project)?
+                            .tasks
+                            .get(task)
+                            .filter(|t| !t.is_empty())?
+                            .title()
+                            .to_string();
+                        dragged.set(Some(TaskPosition {
+                            panel,
+                            status,
+                            project,
+                            task,
+                        }));
+                        Some(title)
+                    })
+                },
+                drop: {
+                    let app = app.clone();
+                    let ui = ui.clone();
+                    let dragged = dragged.clone();
+                    Rc::new(move |status, project, task, text| {
+                        let to = TaskPosition {
+                            panel,
+                            status,
+                            project,
+                            task,
+                        };
+                        let dropped = match dragged.take() {
+                            Some(from) => app.borrow_mut().root.move_task(from, to),
+                            None => app.borrow_mut().root.insert_dropped_text(to, &text),
+                        };
+                        // Not right away: the dragged row may be removed when refreshing.
+                        schedule_refresh(&ui, &app);
+                        dropped
+                    })
+                },
+                end: {
+                    let dragged = dragged.clone();
+                    Rc::new(move || dragged.set(None))
+                },
+            };
+
+            let day = TaskListView::new(
+                on_task_click(Panel::Left),
+                on_edit.clone(),
+                drag_and_drop(Panel::Left),
+                syncing.clone(),
+            );
+            let global = TaskListView::new(
+                on_task_click(Panel::Right),
+                on_edit.clone(),
+                drag_and_drop(Panel::Right),
+                syncing.clone(),
+            );
             let details = DetailsView::new(on_edit, on_details_click, syncing);
 
             let right_stack = gtk::Stack::builder().hexpand(true).vexpand(true).build();

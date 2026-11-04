@@ -13,7 +13,10 @@ Everything can still be done with the keyboard, but you can also:
 - click a task to select it,
 - double click a task to edit it,
 - click a task's description, in the details panel (`D`), to edit it,
-- scroll with the mouse wheel or touchpad.
+- scroll with the mouse wheel or touchpad,
+- drag and drop tasks: to reorder them, or to move them to another project, status (e.g. from TODO to DONE), or
+  to the other panel (between the day and the global list). Dragging near the top or bottom edge scrolls the list.
+  Text dropped from other applications becomes a new task (first line: title, rest: description).
 
 Clicking elsewhere while editing confirms the edit.
 
