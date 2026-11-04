@@ -114,10 +114,12 @@ impl TaskRow {
         drag.connect_drag_begin({
             let row = row.downgrade();
             move |drag, _| {
-                // The row itself is what's shown under the pointer while dragging.
+                // The row itself is what's shown under the pointer while dragging. A snapshot of it, not the live
+                // widget: otherwise, when dragging over the row itself, the drop indicator would show up on the
+                // icon too.
                 let (x, y) = hotspot.get();
-                let paintable = gtk::WidgetPaintable::new(row.upgrade().as_ref());
-                drag.set_icon(Some(&paintable), x, y);
+                let snapshot = gtk::WidgetPaintable::new(row.upgrade().as_ref()).current_image();
+                drag.set_icon(Some(&snapshot), x, y);
             }
         });
         drag.connect_drag_end({
