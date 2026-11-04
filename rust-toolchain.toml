@@ -1,3 +1,5 @@
 [toolchain]
-channel = "nightly"
-edition = "2024"
+# Same as `rust-version` in Cargo.toml (the minimum required by gtk4-rs).
+# Formatting uses nightly-only rustfmt options, so it runs with `cargo +nightly fmt` (see justfile).
+channel = "1.92"
+components = ["clippy"]

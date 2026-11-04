@@ -28,6 +28,9 @@ sudo apt install libgtk-4-dev
 cargo build --release
 ```
 
+The toolchain is pinned in `rust-toolchain.toml` (rustup installs it automatically).
+Formatting needs nightly, because `rustfmt.toml` uses unstable options: `cargo +nightly fmt` (or `just fmt`).
+
 ## Transparency
 
 The window itself is fully transparent; Vaporeon paints its own background using `background` and
