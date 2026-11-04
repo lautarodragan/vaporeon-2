@@ -106,12 +106,14 @@ impl Root {
         }
         self.take_snapshot(DataFile::Day);
 
+        let git_started_at = std::time::Instant::now();
         let git_date = git::date_of_most_recent_commit(self.settings.storage_path.as_path());
         log::debug!("git date: {git_date:?}");
         let git_add_result = git::add(self.settings.storage_path.as_path());
         log::debug!("git add output: {git_add_result:?}");
         let git_commit_result = git::commit(self.settings.storage_path.as_path());
         log::debug!("git commit result: {git_commit_result:?}");
+        log::debug!("git took {} ms", git_started_at.elapsed().as_millis());
 
         saved
     }

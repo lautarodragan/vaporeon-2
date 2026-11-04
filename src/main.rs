@@ -1,6 +1,6 @@
 #![allow(clippy::new_without_default)]
 
-use std::{cell::RefCell, error::Error, rc::Rc};
+use std::{cell::RefCell, error::Error, rc::Rc, time::Instant};
 
 use chrono::Local;
 use flexi_logger::{FileSpec, WriteMode};
@@ -41,7 +41,20 @@ pub struct App {
 
 pub type AppRef = Rc<RefCell<App>>;
 
+/// When the process started. Used to log how long starting up takes.
+static STARTED_AT: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+fn ms_since(start: Instant) -> u128 {
+    start.elapsed().as_millis()
+}
+
+fn ms_since_started() -> u128 {
+    STARTED_AT.get().map(|s| ms_since(*s)).unwrap_or_default()
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
+    STARTED_AT.get_or_init(Instant::now);
+
     // Logs go to $XDG_STATE_HOME/vaporeon/vaporeon.log (~/.local/state/vaporeon/vaporeon.log by default),
     // or to the current directory if that can't be created.
     let mut log_file = FileSpec::default().basename("vaporeon").suppress_timestamp();
@@ -72,6 +85,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn build_ui(application: &gtk::Application) {
+    log::debug!("GTK initialized, {} ms after starting", ms_since_started());
+
     // Activating an already-running instance (e.g. launching it twice) just focuses the existing window.
     if let Some(window) = application.active_window() {
         window.present();
@@ -116,7 +131,14 @@ fn build_ui(application: &gtk::Application) {
     window.connect_close_request({
         let app = app.clone();
         let ui = ui.clone();
-        move |_| {
+        move |window| {
+            let closing_at = Instant::now();
+
+            // Hide the window right away, and only then save: saving (and committing) can take a while,
+            // e.g. if git signs commits, and there's no reason to keep the window on screen meanwhile.
+            window.set_visible(false);
+            WidgetExt::display(window).flush();
+
             let conflicts = ui.pending_conflicts();
             let mut app = app.borrow_mut();
             // Whatever is being edited is kept, as if confirmed.
@@ -137,6 +159,7 @@ fn build_ui(application: &gtk::Application) {
                 }
             }
             app.settings.save();
+            log::debug!("Saved everything in {} ms. Closing.", ms_since(closing_at));
             glib::Propagation::Proceed
         }
     });
@@ -159,6 +182,12 @@ fn build_ui(application: &gtk::Application) {
     });
 
     window.present();
+
+    // Log how long it took to show something on screen. Ticks happen right before drawing a frame.
+    window.add_tick_callback(|_, _| {
+        log::debug!("First frame, {} ms after starting", ms_since_started());
+        glib::ControlFlow::Break
+    });
     // After presenting, so the keyboard focus can be set.
     ui.refresh(&app, true);
 }

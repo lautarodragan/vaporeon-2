@@ -6,7 +6,7 @@ pub fn log_format(
     now: &mut DeferredNow,
     record: &log::Record,
 ) -> Result<(), std::io::Error> {
-    write!(w, "{}   ", now.format("%-l:%M:%S%P"))?;
+    write!(w, "{}   ", now.format("%-l:%M:%S%.3f%P"))?;
 
     let level = format!("{: <8}", record.level());
     write!(w, "{}", style(record.level()).paint(level))?;
