@@ -4,9 +4,10 @@
 //! window
 //! └── main box
 //!     ├── header (drawing area: project filter, date, week)
-//!     └── panels
-//!         ├── day task list
-//!         └── right panel: nothing | global task list | task details
+//!     ├── panels
+//!     │   ├── day task list
+//!     │   └── right panel: nothing | global task list | task details
+//!     └── status bar (messages and prompts)
 //! ```
 //!
 //! The model ([`Root`](crate::components::root::Root)) is the source of truth. After anything changes it,
@@ -14,35 +15,56 @@
 
 use std::{
     cell::{Cell, RefCell},
+    collections::{HashMap, VecDeque},
+    path::PathBuf,
     rc::{Rc, Weak},
+    time::Duration,
 };
 
-use gtk::{glib, prelude::*};
+use gtk::{gio, glib, prelude::*};
 
 use crate::{
     AppRef,
     canvas::{Canvas, Metrics},
-    components::root::{HEADER_ROWS, HeaderLink, Panel, RightPanel, TaskPosition},
+    components::root::{
+        DataFile,
+        ExternalChange,
+        HEADER_ROWS,
+        HeaderLink,
+        Panel,
+        Resolution,
+        RightPanel,
+        TaskPosition,
+    },
     theme::Theme,
     view::{
         details_view::DetailsView,
+        status_bar::{PromptOption, StatusBar},
         style::WINDOW_PADDING,
         task_list_view::{DragAndDrop, OnEdit, OnTaskClick, TaskListView},
     },
 };
 
 mod details_view;
+mod status_bar;
 mod style;
 mod task_list_view;
 
 /// Below this width (in pixels), only one panel is shown, using the full width.
 const TWO_PANELS_MIN_WIDTH: i32 = 900;
 
+/// How long to wait after a file changes before checking it. Programs (and git) often write files in several steps.
+const FILE_CHANGE_DELAY: Duration = Duration::from_millis(250);
+
+const CONFLICT_OPTIONS: [PromptOption; 3] = [('r', "reload"), ('k', "keep mine"), ('b', "backup mine & reload")];
+
 pub struct Ui {
     pub window: gtk::ApplicationWindow,
     header: gtk::DrawingArea,
     main_box: gtk::Box,
+    panels: gtk::Box,
     right_stack: gtk::Stack,
+    status_bar: StatusBar,
     day: RefCell<TaskListView>,
     global: RefCell<TaskListView>,
     details: RefCell<DetailsView>,
@@ -50,6 +72,14 @@ pub struct Ui {
     metrics: Cell<Metrics>,
     refresh_scheduled: Cell<bool>,
     refresh_scroll: Cell<bool>,
+    /// The file being watched for changes, for each data file, and its monitor.
+    file_monitors: RefCell<HashMap<DataFile, (PathBuf, gio::FileMonitor)>>,
+    /// Files waiting to be checked for changes (see [`FILE_CHANGE_DELAY`]).
+    file_checks_scheduled: RefCell<Vec<DataFile>>,
+    /// Files that changed on disk while having unsaved changes, waiting for the user to choose what to do.
+    conflicts: RefCell<VecDeque<DataFile>>,
+    app: AppRef,
+    this: Weak<Ui>,
 }
 
 impl Ui {
@@ -214,8 +244,11 @@ impl Ui {
                 .margin_start(WINDOW_PADDING)
                 .margin_end(WINDOW_PADDING)
                 .build();
+            let status_bar = StatusBar::new();
+
             main_box.append(&header);
             main_box.append(&panels);
+            main_box.append(&status_bar.widget);
 
             window.set_child(Some(&main_box));
 
@@ -232,7 +265,9 @@ impl Ui {
                 window,
                 header,
                 main_box,
+                panels,
                 right_stack,
+                status_bar,
                 day: RefCell::new(day),
                 global: RefCell::new(global),
                 details: RefCell::new(details),
@@ -240,6 +275,11 @@ impl Ui {
                 metrics: Cell::new(metrics),
                 refresh_scheduled: Cell::new(false),
                 refresh_scroll: Cell::new(false),
+                file_monitors: RefCell::new(HashMap::new()),
+                file_checks_scheduled: RefCell::new(vec![]),
+                conflicts: RefCell::new(VecDeque::new()),
+                app: app.clone(),
+                this: ui.clone(),
             }
         })
     }
@@ -258,6 +298,12 @@ impl Ui {
     ///
     /// `scroll`: whether to scroll to the selected task if it moved (for keyboard navigation).
     pub fn refresh(&self, app: &AppRef, scroll: bool) {
+        for message in app.borrow_mut().root.take_messages() {
+            self.status_bar.show_message(&message.text, message.is_error);
+        }
+
+        self.watch_files();
+
         let app = app.borrow();
         let root = &app.root;
         let metrics = self.metrics.get();
@@ -306,6 +352,145 @@ impl Ui {
     /// Redraws the header. E.g. when the day changes, since it highlights "today".
     pub fn redraw_header(&self) {
         self.header.queue_draw();
+    }
+
+    /// Whether a question is waiting for an answer in the status bar. While one is, the rest of the UI doesn't
+    /// respond: only the options of the question do.
+    pub fn is_prompt_active(&self) -> bool {
+        self.status_bar.is_prompt_active()
+    }
+
+    /// Answers the question in the status bar with the given key. Returns false if it isn't one of the options.
+    pub fn answer_prompt(&self, key: char) -> bool {
+        let resolution = match key.to_ascii_lowercase() {
+            'r' => Resolution::Reload,
+            'k' => Resolution::KeepMine,
+            'b' => Resolution::BackupAndReload,
+            _ => return false,
+        };
+        let Some(file) = self.conflicts.borrow_mut().pop_front() else {
+            return false;
+        };
+
+        self.app.borrow_mut().root.resolve_conflict(file, resolution);
+        self.status_bar.hide();
+        self.panels.set_can_target(true);
+        self.header.set_can_target(true);
+        self.refresh(&self.app, true);
+        self.show_next_conflict();
+        true
+    }
+
+    /// Files that changed on disk while having unsaved changes, and for which the user hasn't chosen what to do yet.
+    pub fn pending_conflicts(&self) -> Vec<DataFile> {
+        self.conflicts.borrow().iter().copied().collect()
+    }
+
+    /// Watches the files currently shown (the selected day changes), to notice when they change on disk.
+    fn watch_files(&self) {
+        for file in DataFile::ALL {
+            let path = self.app.borrow().root.file_path(file);
+            if self
+                .file_monitors
+                .borrow()
+                .get(&file)
+                .is_some_and(|(watched, _)| *watched == path)
+            {
+                continue;
+            }
+
+            // Dropping the previous monitor (if any) stops watching the previous file.
+            self.file_monitors.borrow_mut().remove(&file);
+
+            // GIO watches the directory, so this works even if the file doesn't exist yet, or programs replace
+            // it (as many editors do when saving) instead of writing to it.
+            let monitor =
+                match gio::File::for_path(&path).monitor_file(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE) {
+                    Ok(monitor) => monitor,
+                    Err(err) => {
+                        log::warn!("Can't watch {path:?} for changes: {err:?}");
+                        continue;
+                    }
+                };
+            monitor.connect_changed({
+                let ui = self.this.clone();
+                move |_, _, _, event| {
+                    if matches!(
+                        event,
+                        gio::FileMonitorEvent::ChangesDoneHint
+                            | gio::FileMonitorEvent::Changed
+                            | gio::FileMonitorEvent::Created
+                            | gio::FileMonitorEvent::Deleted
+                    ) && let Some(ui) = ui.upgrade()
+                    {
+                        ui.schedule_file_check(file);
+                    }
+                }
+            });
+            self.file_monitors.borrow_mut().insert(file, (path, monitor));
+        }
+    }
+
+    fn schedule_file_check(&self, file: DataFile) {
+        if self.file_checks_scheduled.borrow().contains(&file) {
+            return;
+        }
+        self.file_checks_scheduled.borrow_mut().push(file);
+
+        let ui = self.this.clone();
+        glib::timeout_add_local_once(FILE_CHANGE_DELAY, move || {
+            let Some(ui) = ui.upgrade() else { return };
+            ui.file_checks_scheduled.borrow_mut().retain(|f| *f != file);
+            ui.check_file(file);
+        });
+    }
+
+    /// Checks whether a file changed on disk. If so: reloads it if there are no unsaved changes, asks otherwise.
+    fn check_file(&self, file: DataFile) {
+        // Still waiting for an answer about this file: it'll be dealt with then, with whatever is on disk by then.
+        if self.conflicts.borrow().contains(&file) {
+            return;
+        }
+
+        let change = self.app.borrow_mut().root.check_external_change(file);
+        match change {
+            ExternalChange::None => {}
+            ExternalChange::Reloaded => self.refresh(&self.app, true),
+            ExternalChange::Conflict => {
+                self.conflicts.borrow_mut().push_back(file);
+                self.show_next_conflict();
+            }
+        }
+    }
+
+    fn show_next_conflict(&self) {
+        if self.status_bar.is_prompt_active() {
+            return;
+        }
+        let Some(file) = self.conflicts.borrow().front().copied() else {
+            return;
+        };
+
+        let name = self.app.borrow().root.file_display_name(file);
+        let text = format!("{name} changed on disk, and you have unsaved changes.");
+
+        // Clicking an option removes the options, so answer once GTK is done handling the click.
+        let on_click: Rc<dyn Fn(char)> = {
+            let ui = self.this.clone();
+            Rc::new(move |key| {
+                let ui = ui.clone();
+                glib::idle_add_local_once(move || {
+                    if let Some(ui) = ui.upgrade() {
+                        ui.answer_prompt(key);
+                    }
+                });
+            })
+        };
+
+        self.status_bar.show_prompt(&text, &CONFLICT_OPTIONS, on_click);
+        // Nothing else responds to the mouse until the question is answered.
+        self.panels.set_can_target(false);
+        self.header.set_can_target(false);
     }
 }
 

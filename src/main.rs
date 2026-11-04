@@ -7,8 +7,8 @@ use flexi_logger::{FileSpec, WriteMode};
 use gtk::{gdk, gio, glib, prelude::*};
 
 use crate::{
-    action::{Action, Actions, ApplicationAction, KeyCode, KeyEvent, OnActions, TextAction},
-    components::root::{EditTarget, Root},
+    action::{Action, Actions, ApplicationAction, KeyCode, KeyEvent, KeyModifiers, OnActions, TextAction},
+    components::root::{DataFile, EditTarget, Root},
     log_format::log_format,
     settings::Settings,
     theme::Theme,
@@ -115,12 +115,27 @@ fn build_ui(application: &gtk::Application) {
 
     window.connect_close_request({
         let app = app.clone();
+        let ui = ui.clone();
         move |_| {
+            let conflicts = ui.pending_conflicts();
             let mut app = app.borrow_mut();
             // Whatever is being edited is kept, as if confirmed.
             app.root.finish_editing();
-            app.root.save();
-            app.root.save_global();
+            // Global first, so it's included in the commit made when saving the day.
+            for file in [DataFile::Global, DataFile::Day] {
+                if conflicts.contains(&file) {
+                    // It changed on disk and the user didn't choose what to do yet: don't overwrite it.
+                    // Their version goes to a backup instead.
+                    if let Err(err) = app.root.backup(file) {
+                        log::error!("Couldn't save a backup of {file:?}: {err:?}");
+                    }
+                } else {
+                    match file {
+                        DataFile::Global => app.root.save_global(),
+                        DataFile::Day => app.root.save(),
+                    };
+                }
+            }
             app.settings.save();
             glib::Propagation::Proceed
         }
@@ -182,6 +197,17 @@ fn setup_input(app: &AppRef, ui: &Rc<Ui>) {
                 log::debug!("event: {event:?} ({key:?}, {state:?})");
             }
 
+            // While a question is shown in the status bar, only its options respond.
+            if ui.is_prompt_active() {
+                if let KeyCode::Char(key) = event.code
+                    && !event.modifiers.contains(KeyModifiers::CONTROL)
+                    && !event.modifiers.contains(KeyModifiers::ALT)
+                {
+                    ui.answer_prompt(key);
+                }
+                return glib::Propagation::Stop;
+            }
+
             let (editing, actions) = {
                 let app = app.borrow();
                 (app.root.editing(), app.actions.actions_by_key(event))
@@ -193,9 +219,16 @@ fn setup_input(app: &AppRef, ui: &Rc<Ui>) {
             }
 
             if actions.contains(&Action::Application(ApplicationAction::Save)) {
-                let app = app.borrow();
-                app.root.save();
-                app.root.save_global();
+                {
+                    let mut app = app.borrow_mut();
+                    // Global first, so it's included in the commit made when saving the day.
+                    let saved = app.root.save_global() & app.root.save();
+                    if saved {
+                        let date = app.root.selected_date();
+                        app.root.info(format!("Saved {date}."));
+                    }
+                }
+                ui.refresh(&app, false);
                 return glib::Propagation::Stop;
             }
 

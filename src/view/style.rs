@@ -161,6 +161,20 @@ window.vaporeon .tasks.indented {{
     margin-left: {PROJECT_INDENT}px;
 }}
 
+/* Status bar: messages and questions, at the bottom. */
+window.vaporeon .status-bar .options {{
+    margin-left: 20px;
+}}
+
+window.vaporeon .status-bar .option {{
+    margin-right: 20px;
+}}
+
+window.vaporeon .status-bar .key {{
+    color: {header};
+    margin-right: 6px;
+}}
+
 /* Where a dragged task would be dropped. A 2px line centered on the border between rows (1px inside the row,
    1px outside), so below a row and above the next one are drawn in exactly the same place. */
 window.vaporeon .task.drop-above {{

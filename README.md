@@ -11,6 +11,19 @@ It reads and writes the same `settings.toml` and `actions.ini` (in `$XDG_CONFIG_
 The day is saved (and committed, if `storage_path` is a git repository) with `Ctrl+S`, when going to another day,
 and when closing the window.
 
+A `•` next to the date means the day has unsaved changes. Messages (like "Saved", or errors) show up at the bottom.
+
+### Changes made outside of Vaporeon
+
+The files of the selected day and of the global list are watched, so editing them in another program (or a
+`git pull`) is noticed right away:
+
+- If you don't have unsaved changes, the file is reloaded.
+- If you do, a question at the bottom asks what to do: `r` reload (discarding your changes), `k` keep yours (saving
+  will overwrite the file), or `b` save yours to a backup (`<day>.toml.bak-<time>`, not committed) and reload.
+  Until you answer, nothing else responds, so nothing overwrites the file by accident. Closing the window
+  meanwhile saves your version to a backup too, instead of overwriting the file.
+
 ## Mouse
 
 Everything can still be done with the keyboard, but you can also:

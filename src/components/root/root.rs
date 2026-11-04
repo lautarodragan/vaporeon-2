@@ -2,6 +2,7 @@ use std::{fs::remove_file, io::ErrorKind};
 
 use chrono::{Days, Local, NaiveDate};
 
+use super::files::{DataFile, FileSnapshot, Message};
 use crate::{
     action::{Action, OnActions, TextAction},
     components::{
@@ -25,6 +26,10 @@ pub struct Root {
     pub(super) selected_date: NaiveDate,
     pub(super) selected_status_list: usize,
     pub(super) project_filter: Option<usize>,
+    /// What we know about each file on disk. See [`DataFile`].
+    pub(super) snapshots: [FileSnapshot; 2],
+    /// Messages for the user, waiting to be shown.
+    pub(super) messages: Vec<Message>,
 }
 
 impl Root {
@@ -39,10 +44,12 @@ impl Root {
             selected_status_list: 0,
             project_filter: None,
             right_panel: RightPanel::Nothing,
+            snapshots: Default::default(),
+            messages: vec![],
         }
     }
 
-    fn file_name(&self) -> String {
+    pub(super) fn file_name(&self) -> String {
         self.selected_date.format("%Y-%m-%d").to_string()
     }
 
@@ -59,9 +66,9 @@ impl Root {
     }
 
     pub fn load_selected_day(&mut self) {
-        let file_name = self.file_name();
-        let path = self.settings.storage_path.join(file_name + ".toml");
+        let path = self.file_path(DataFile::Day);
         self.task_list_day.load_file(path.as_path());
+        self.take_snapshot(DataFile::Day);
     }
 
     pub fn load_from_template(&mut self) {
@@ -71,28 +78,33 @@ impl Root {
     }
 
     pub fn load_global(&mut self) {
-        let file_name = "global".to_string();
-        let path = self.settings.storage_path.join(file_name + ".toml");
+        let path = self.file_path(DataFile::Global);
         self.task_list_global.load_file(path.as_path());
+        self.take_snapshot(DataFile::Global);
     }
 
-    pub fn save(&self) {
+    /// Saves the selected day, and commits. Returns false if it couldn't be saved (the error is reported as a message).
+    pub fn save(&mut self) -> bool {
         let file_name = self.file_name();
+        let mut saved = true;
 
         if self.task_list_day.is_empty() {
             log::debug!("{file_name} is empty. Skipping save.");
             let file_name = file_name + ".toml";
-            if let Err(err) = remove_file(self.settings.storage_path.as_path().join(file_name.as_str())) {
-                if err.kind() != ErrorKind::NotFound {
-                    log::warn!("Tried to delete file {file_name} and failed miserably. {err:?}");
-                }
+            if let Err(err) = remove_file(self.settings.storage_path.as_path().join(file_name.as_str()))
+                && err.kind() != ErrorKind::NotFound
+            {
+                self.error(format!("Couldn't delete the empty {file_name}: {err}"));
+                saved = false;
             }
         } else {
             let day = self.to_day();
-            if let Err(err) = day.to_file(self.settings.storage_path.as_path(), file_name) {
-                log::error!("Failed to save file! {err:?}");
+            if let Err(err) = day.to_file(self.settings.storage_path.as_path(), file_name.clone()) {
+                self.error(format!("Couldn't save {file_name}.toml: {err:?}"));
+                saved = false;
             };
         }
+        self.take_snapshot(DataFile::Day);
 
         let git_date = git::date_of_most_recent_commit(self.settings.storage_path.as_path());
         log::debug!("git date: {git_date:?}");
@@ -100,6 +112,8 @@ impl Root {
         log::debug!("git add output: {git_add_result:?}");
         let git_commit_result = git::commit(self.settings.storage_path.as_path());
         log::debug!("git commit result: {git_commit_result:?}");
+
+        saved
     }
 
     pub fn save_as_template(&self) {
@@ -122,14 +136,21 @@ impl Root {
         }
     }
 
-    pub fn save_global(&self) {
+    /// Saves the global task list. Returns false if it couldn't be saved (the error is reported as a message).
+    pub fn save_global(&mut self) -> bool {
         let file_name = "global".to_string();
         log::debug!("Want to save {file_name}...");
 
         let day = self.to_day_global();
-        if let Err(err) = day.to_file(self.settings.storage_path.as_path(), file_name) {
-            log::error!("Failed to save file! {err:?}");
+        let saved = match day.to_file(self.settings.storage_path.as_path(), file_name) {
+            Ok(()) => true,
+            Err(err) => {
+                self.error(format!("Couldn't save global.toml: {err:?}"));
+                false
+            }
         };
+        self.take_snapshot(DataFile::Global);
+        saved
     }
 
     pub fn selected_date(&self) -> NaiveDate {
