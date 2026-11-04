@@ -6,6 +6,17 @@ Everything works the same as in the terminal version: same keyboard shortcuts, s
 It reads and writes the same `~/.config/vaporeon/settings.toml`, `~/.config/vaporeon/actions.ini`
 and the day files in `storage_path` (`~/vaporeon` by default), so both versions can be used interchangeably.
 
+## Mouse
+
+Everything can still be done with the keyboard, but you can also:
+
+- click a task to select it,
+- double click a task to edit it,
+- click a task's description, in the details panel (`D`), to edit it,
+- scroll with the mouse wheel or touchpad.
+
+Clicking elsewhere while editing confirms the edit.
+
 ## Editing text
 
 Text is edited with regular GTK text widgets, placed exactly where the text is drawn. So all the usual GTK

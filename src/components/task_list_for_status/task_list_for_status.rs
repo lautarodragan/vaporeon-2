@@ -1,5 +1,5 @@
 use crate::{
-    components::{EditableTask, spacing, task_list_for_project::TaskListForProject},
+    components::{EditableTask, task_list_for_project::TaskListForProject},
     models::{Project, Task, TaskStatus},
 };
 
@@ -48,16 +48,6 @@ impl TaskListForStatus {
                 project_filter: None,
             })
             .collect()
-    }
-
-    /// Indentation of the projects, in pixels.
-    pub fn left_padding(&self) -> f64 {
-        let render_left_border = self.project_filter.is_none();
-        if render_left_border {
-            spacing::STATUS + spacing::STATUS_LINE
-        } else {
-            spacing::STATUS
-        }
     }
 
     pub fn editing_task_mut(&mut self) -> Option<&mut EditableTask> {

@@ -3,7 +3,7 @@ use std::{fs::remove_file, io::ErrorKind};
 use chrono::{Days, Local, NaiveDate};
 
 use crate::{
-    canvas::EditTarget,
+    action::{Action, OnActions, TextAction},
     components::{
         EditableTask,
         task_details::TaskDetails,
@@ -214,17 +214,6 @@ impl Root {
         }
     }
 
-    /// Number of task-list rows that fit on screen. Used to keep the selected task visible when scrolling.
-    pub fn set_visible_rows(&mut self, rows: usize) {
-        self.task_list_day.set_height(rows);
-        self.task_list_global.set_height(rows);
-    }
-
-    pub fn refresh_scroll(&mut self) {
-        self.task_list_day.refresh_scroll();
-        self.task_list_global.refresh_scroll();
-    }
-
     pub fn set_filter(&mut self, project_index: Option<usize>) {
         // Ignore filters that point past the number of visible projects, so e.g.
         // pressing the "filter project 4" key with fewer projects is a no-op
@@ -259,20 +248,6 @@ impl Root {
         }
     }
 
-    /// The current text of whatever is being edited.
-    pub fn editing_text(&mut self) -> String {
-        match self.editing() {
-            Some(EditTarget::TaskDetails) => self.task_details.description().to_string(),
-            Some(EditTarget::TaskTitle) => self
-                .task_list_day
-                .editing_task_mut()
-                .or(self.task_list_global.editing_task_mut())
-                .map(|task| task.title().to_string())
-                .unwrap_or_default(),
-            None => String::new(),
-        }
-    }
-
     /// Updates the text of whatever is being edited. Called by the text editor widget on every change.
     pub fn set_editing_text(&mut self, text: String) {
         match self.editing() {
@@ -295,11 +270,150 @@ impl Root {
         self.task_details.set_title(task.title());
         self.task_details.set_description(task.description());
     }
+
+    pub fn task_list_day(&self) -> &TaskList {
+        &self.task_list_day
+    }
+
+    pub fn task_list_global(&self) -> &TaskList {
+        &self.task_list_global
+    }
+
+    pub fn task_details(&self) -> &TaskDetails {
+        &self.task_details
+    }
+
+    pub fn right_panel(&self) -> &RightPanel {
+        &self.right_panel
+    }
+
+    pub fn selected_panel(&self) -> Panel {
+        if self.selected_panel == 0 {
+            Panel::Left
+        } else {
+            Panel::Right
+        }
+    }
+
+    /// Confirms whatever is being edited, if anything.
+    pub fn finish_editing(&mut self) {
+        match self.editing() {
+            Some(EditTarget::TaskTitle) => self.on_actions(vec![Action::Text(TextAction::ConfirmEdit)]),
+            Some(EditTarget::TaskDetails) => self.on_actions(vec![Action::Text(TextAction::ConfirmEditMultiLine)]),
+            None => {}
+        }
+    }
+
+    /// Focuses a panel, e.g. when clicking on it.
+    pub fn focus_panel(&mut self, panel: Panel) {
+        match panel {
+            Panel::Left => self.selected_panel = 0,
+            Panel::Right if self.right_panel != RightPanel::Nothing => self.selected_panel = 1,
+            Panel::Right => {}
+        }
+    }
+
+    /// Selects a task with the mouse. With `edit`, also starts editing it (double click).
+    pub fn click_task(&mut self, panel: Panel, status: usize, project: usize, task: usize, edit: bool) {
+        self.finish_editing();
+
+        let list = match panel {
+            Panel::Left => &mut self.task_list_day,
+            Panel::Right if self.right_panel == RightPanel::GlobalTaskList => &mut self.task_list_global,
+            Panel::Right => return,
+        };
+
+        if !list.select(status, project, task) {
+            return;
+        }
+        if edit {
+            list.selected_status_mut()
+                .selected_project_mut()
+                .selected_task_mut()
+                .set_is_editing(true);
+        }
+
+        self.focus_panel(panel);
+        self.on_selection_change();
+    }
+
+    /// Clicking on the description in the details panel starts editing it.
+    pub fn click_details(&mut self) {
+        if self.right_panel != RightPanel::TaskDetails || self.task_details.is_editing() {
+            return;
+        }
+        self.finish_editing();
+        self.focus_panel(Panel::Right);
+        self.task_details
+            .on_actions(vec![Action::Text(TextAction::EnterEditMode)]);
+    }
 }
 
-#[derive(PartialEq, Eq)]
+/// What kind of text is being edited.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum EditTarget {
+    /// The title of a task. Single line.
+    TaskTitle,
+    /// The description of a task, in the details panel. Multiple lines.
+    TaskDetails,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Panel {
+    Left,
+    Right,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub enum RightPanel {
     Nothing,
     GlobalTaskList,
     TaskDetails,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn click_selects_and_double_click_edits() {
+        let mut root = Root::new(Settings::default());
+
+        // Status 0 (TODO), project 1, task 0.
+        root.click_task(Panel::Left, 0, 1, 0, false);
+        assert_eq!(root.task_list_day.selected_status_index(), 0);
+        assert_eq!(root.task_list_day.selected_status().selected_project, 1);
+        assert_eq!(root.editing(), None);
+
+        // Status 2 (DONE), project 2, task 0, double click.
+        root.click_task(Panel::Left, 2, 2, 0, true);
+        assert_eq!(root.task_list_day.selected_status_index(), 2);
+        assert_eq!(root.task_list_day.selected_status().selected_project, 2);
+        assert_eq!(root.editing(), Some(EditTarget::TaskTitle));
+
+        root.set_editing_text("hola".to_string());
+        // Clicking elsewhere confirms the edit.
+        root.click_task(Panel::Left, 0, 0, 0, false);
+        assert_eq!(root.editing(), None);
+        assert_eq!(
+            root.task_list_day.status_lists()[2].tasks_by_project[2].tasks[0].title(),
+            "hola"
+        );
+    }
+
+    #[test]
+    fn clicking_the_right_panel_does_nothing_when_it_is_hidden() {
+        let mut root = Root::new(Settings::default());
+        root.click_task(Panel::Right, 1, 0, 0, false);
+        assert_eq!(root.selected_panel(), Panel::Left);
+        assert_eq!(root.task_list_global.selected_status_index(), 0);
+    }
+
+    #[test]
+    fn out_of_range_clicks_are_ignored() {
+        let mut root = Root::new(Settings::default());
+        root.click_task(Panel::Left, 9, 9, 9, true);
+        assert_eq!(root.task_list_day.selected_status_index(), 0);
+        assert_eq!(root.editing(), None);
+    }
 }

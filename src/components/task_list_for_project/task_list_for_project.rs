@@ -1,4 +1,4 @@
-use crate::components::{EditableTask, spacing};
+use crate::components::EditableTask;
 
 pub struct TaskListForProject {
     pub project_id: usize,
@@ -23,11 +23,6 @@ impl TaskListForProject {
 
     pub fn height(&self) -> usize {
         1 + self.tasks.len()
-    }
-
-    /// Indentation of the tasks, in pixels.
-    pub fn left_padding(&self) -> f64 {
-        if self.show_title { spacing::PROJECT } else { 0.0 }
     }
 
     pub fn editing_task_mut(&mut self) -> Option<&mut EditableTask> {

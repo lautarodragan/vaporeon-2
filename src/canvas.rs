@@ -1,30 +1,10 @@
-//! Tiny immediate-mode drawing layer on top of Cairo + Pango.
+//! Tiny drawing layer on top of Cairo + Pango, used to draw the header.
 //!
-//! Components lay themselves out in rows (one line of text each, [`Canvas::line_height`] pixels tall)
-//! and draw text with [`Canvas::text`]. Everything is measured in pixels.
-//!
-//! Text being edited is not drawn here: components call [`Canvas::set_editor`] instead, and a GTK text widget
-//! is placed on top of the canvas at that position (see `main.rs`).
-
-use std::cell::{Cell, RefCell};
+//! Also has the font [`Metrics`] that the rest of the UI uses to size its rows.
 
 use gtk::{cairo, pango};
 
 use crate::theme::{Color, Theme};
-
-#[derive(Debug, Copy, Clone, Default, PartialEq)]
-pub struct Rect {
-    pub x: f64,
-    pub y: f64,
-    pub width: f64,
-    pub height: f64,
-}
-
-impl Rect {
-    pub fn right(&self) -> f64 {
-        self.x + self.width
-    }
-}
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Style {
@@ -51,36 +31,9 @@ impl Style {
     pub fn dim(self) -> Self {
         Self { dim: true, ..self }
     }
-
-    pub fn dim_if(self, dim: bool) -> Self {
-        Self { dim, ..self }
-    }
-
-    pub fn underline(self) -> Self {
-        Self {
-            underline: true,
-            ..self
-        }
-    }
 }
 
-/// What kind of text is being edited.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum EditTarget {
-    /// The title of a task. Single line.
-    TaskTitle,
-    /// The description of a task, in the details panel. Multiple lines.
-    TaskDetails,
-}
-
-/// Where the text editor widget should be.
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub struct EditorPlacement {
-    pub target: EditTarget,
-    pub rect: Rect,
-}
-
-/// Font metrics, used both for drawing and for placing the text editor widgets.
+/// Font metrics. The height of every row in the UI comes from here.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Metrics {
     /// Height of a row, in pixels.
@@ -117,19 +70,10 @@ pub struct Canvas<'a> {
     /// Height of a single row of text, in pixels.
     pub line_height: f64,
     pub width: f64,
-    pub height: f64,
-    clip_stack: RefCell<Vec<Rect>>,
-    editor: Cell<Option<EditorPlacement>>,
 }
 
 impl<'a> Canvas<'a> {
-    pub fn new(
-        cr: &'a cairo::Context,
-        pango_context: &pango::Context,
-        theme: &'a Theme,
-        width: f64,
-        height: f64,
-    ) -> Self {
+    pub fn new(cr: &'a cairo::Context, pango_context: &pango::Context, theme: &'a Theme, width: f64) -> Self {
         let metrics = Metrics::new(pango_context, theme);
         let font = theme.font_description();
         let mut bold_font = font.clone();
@@ -145,29 +89,12 @@ impl<'a> Canvas<'a> {
             metrics,
             line_height: metrics.line_height,
             width,
-            height,
-            clip_stack: RefCell::new(vec![]),
-            editor: Cell::new(None),
         }
     }
 
     /// Converts a number of rows to pixels.
     pub fn rows(&self, n: impl Into<f64>) -> f64 {
         n.into() * self.line_height
-    }
-
-    pub fn fill(&self, rect: Rect, color: Color) {
-        self.set_color(color);
-        self.cr.rectangle(rect.x, rect.y, rect.width, rect.height);
-        let _ = self.cr.fill();
-    }
-
-    pub fn clear(&self, color: Color) {
-        let _ = self.cr.save();
-        self.cr.set_operator(cairo::Operator::Source);
-        self.cr.set_source_rgba(color.r, color.g, color.b, color.a);
-        let _ = self.cr.paint();
-        let _ = self.cr.restore();
     }
 
     fn set_color(&self, color: Color) {
@@ -210,33 +137,5 @@ impl<'a> Canvas<'a> {
 
     pub fn measure_spans(&self, spans: &[(&str, Style)]) -> f64 {
         spans.iter().map(|(text, style)| self.measure(text, style)).sum()
-    }
-
-    /// Restricts drawing to `rect` until the matching [`Canvas::pop_clip`].
-    pub fn push_clip(&self, rect: Rect) {
-        let _ = self.cr.save();
-        self.cr.rectangle(rect.x, rect.y, rect.width, rect.height);
-        self.cr.clip();
-        self.clip_stack.borrow_mut().push(rect);
-    }
-
-    pub fn pop_clip(&self) {
-        if self.clip_stack.borrow_mut().pop().is_some() {
-            let _ = self.cr.restore();
-        }
-    }
-
-    /// Right edge of the current clip rectangle (or of the canvas, if there is none).
-    pub fn clip_right(&self) -> f64 {
-        self.clip_stack.borrow().last().map(Rect::right).unwrap_or(self.width)
-    }
-
-    /// Marks where the text editor widget should be placed. Text being edited is not drawn by the canvas.
-    pub fn set_editor(&self, target: EditTarget, rect: Rect) {
-        self.editor.set(Some(EditorPlacement { target, rect }));
-    }
-
-    pub fn editor(&self) -> Option<EditorPlacement> {
-        self.editor.get()
     }
 }

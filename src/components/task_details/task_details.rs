@@ -21,6 +21,10 @@ impl TaskDetails {
         self.title = title.to_string();
     }
 
+    pub fn title(&self) -> &str {
+        self.title.as_str()
+    }
+
     pub fn description(&self) -> &str {
         self.description.as_str()
     }

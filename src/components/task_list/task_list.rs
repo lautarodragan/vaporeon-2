@@ -12,10 +12,6 @@ pub struct TaskList {
     pub(super) settings: Settings,
     pub(super) status_lists: Vec<TaskListForStatus>,
     pub(super) selected_status_list: usize,
-    /// Number of rows visible on screen.
-    height: usize,
-    pub(super) scroll: usize,
-    scroll_padding: usize,
     pub(super) project_filter: Option<usize>,
     /// Tasks belonging to hidden projects. They are not shown in the UI, but are
     /// kept around so they survive a save instead of being silently dropped.
@@ -28,9 +24,6 @@ impl TaskList {
             status_lists: TaskListForStatus::from_tasks(settings.visible_projects(), vec![]),
             selected_status_list: 0,
             settings,
-            height: 0,
-            scroll: 0,
-            scroll_padding: 5,
             project_filter: None,
             hidden_tasks: vec![],
         }
@@ -40,12 +33,34 @@ impl TaskList {
         &mut self.status_lists
     }
 
-    pub fn selected_status_list(&self) -> &TaskListForStatus {
-        &self.status_lists[self.selected_status_list]
+    pub fn status_lists(&self) -> &[TaskListForStatus] {
+        &self.status_lists
     }
 
-    pub fn scroll(&self) -> usize {
-        self.scroll
+    /// Index of the selected status list.
+    pub fn selected_status_index(&self) -> usize {
+        self.selected_status_list
+    }
+
+    pub fn project_filter(&self) -> Option<usize> {
+        self.project_filter
+    }
+
+    /// Selects a task, given its indices. Returns false (and does nothing) if they're out of range.
+    pub fn select(&mut self, status: usize, project: usize, task: usize) -> bool {
+        let Some(list) = self.status_lists.get_mut(status) else {
+            return false;
+        };
+        let Some(project_list) = list.tasks_by_project.get_mut(project) else {
+            return false;
+        };
+        if task >= project_list.tasks.len() {
+            return false;
+        }
+        project_list.selected_task = task;
+        list.selected_project = project;
+        self.selected_status_list = status;
+        true
     }
 
     pub fn is_editing(&self) -> bool {
@@ -79,6 +94,7 @@ impl TaskList {
         !self.status_lists.iter().any(|tbs| !tbs.is_empty())
     }
 
+    /// Row (counting from the top of the list) of the selected task.
     pub fn cursor_y(&self) -> usize {
         self.status_lists
             .iter()
@@ -90,29 +106,6 @@ impl TaskList {
 
     pub fn editing_task_mut(&mut self) -> Option<&mut EditableTask> {
         self.status_lists.iter_mut().find_map(|list| list.editing_task_mut())
-    }
-
-    pub fn set_height(&mut self, height: usize) {
-        self.height = height;
-    }
-
-    pub fn refresh_scroll(&mut self) {
-        let cursor_y = self.cursor_y();
-
-        if cursor_y + self.scroll_padding >= self.height {
-            let new_scroll = (self.scroll_padding as isize - self.height as isize + cursor_y as isize).max(0) as usize;
-
-            if new_scroll > self.scroll {
-                self.scroll = new_scroll;
-                return;
-            }
-        }
-        if cursor_y < self.scroll + self.scroll_padding {
-            let new_scroll = (cursor_y as isize - self.scroll_padding as isize).max(0) as usize;
-            if new_scroll < self.scroll {
-                self.scroll = new_scroll;
-            }
-        }
     }
 
     pub fn set_filter(&mut self, project_index: Option<usize>) {

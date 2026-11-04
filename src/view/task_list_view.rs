@@ -1,0 +1,351 @@
+//! A [`TaskList`] as GTK widgets: a scrollable column of rows (status headers, project headers, tasks).
+//!
+//! The model (`TaskList`) is the source of truth. [`TaskListView::update`] makes the widgets match it:
+//! when the structure changes (tasks added, removed or moved, another day loaded, a different filter...) the rows
+//! are rebuilt; otherwise the existing rows are updated in place (texts, selection, editing).
+
+use std::{cell::Cell, rc::Rc};
+
+use gtk::prelude::*;
+
+use crate::{
+    components::{EditableTask, task_list::TaskList},
+    view::style::BULLET_WIDTH,
+};
+
+/// Called when a task is clicked, with the indices of its status, project and task, and the number of clicks
+/// (2 for a double click).
+pub type OnTaskClick = Rc<dyn Fn(usize, usize, usize, i32)>;
+/// Called with the new text, every time the text of the task being edited changes.
+pub type OnEdit = Rc<dyn Fn(String)>;
+
+/// How many rows to keep visible above and below the selected task, when moving the selection with the keyboard.
+const SCROLL_PADDING_ROWS: f64 = 5.0;
+
+/// The parts of the model that, when they change, require rebuilding the rows.
+#[derive(Debug, PartialEq, Eq)]
+struct Structure {
+    filter: Option<usize>,
+    /// For each status: for each project, (name, whether its title is shown, number of tasks).
+    statuses: Vec<Vec<(String, bool, usize)>>,
+}
+
+impl Structure {
+    fn of(list: &TaskList) -> Self {
+        Self {
+            filter: list.project_filter(),
+            statuses: list
+                .status_lists()
+                .iter()
+                .map(|status| {
+                    status
+                        .tasks_by_project
+                        .iter()
+                        .map(|p| (p.project_name.clone(), p.show_title, p.tasks.len()))
+                        .collect()
+                })
+                .collect(),
+        }
+    }
+}
+
+struct TaskRow {
+    row: gtk::Box,
+    label: gtk::Label,
+    editor: Option<gtk::Text>,
+}
+
+impl TaskRow {
+    fn new(on_click: impl Fn(i32) + 'static) -> Self {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        row.add_css_class("row");
+        row.add_css_class("task");
+
+        let bullet = gtk::Label::builder().label("-").xalign(0.0).build();
+        bullet.add_css_class("bullet");
+        bullet.set_size_request(BULLET_WIDTH, -1);
+
+        let label = gtk::Label::builder()
+            .xalign(0.0)
+            .hexpand(true)
+            .single_line_mode(true)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .build();
+        label.add_css_class("title");
+
+        row.append(&bullet);
+        row.append(&label);
+
+        let click = gtk::GestureClick::new();
+        click.connect_pressed(move |gesture, n_press, _, _| {
+            // So the panel's own click handler doesn't run too.
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            on_click(n_press);
+        });
+        row.add_controller(click);
+
+        Self {
+            row,
+            label,
+            editor: None,
+        }
+    }
+
+    fn update(&mut self, task: &EditableTask, selected: bool, on_edit: &OnEdit, syncing: &Rc<Cell<bool>>) {
+        if task.is_editing() {
+            if self.editor.is_none() {
+                let editor = gtk::Text::builder().hexpand(true).valign(gtk::Align::Center).build();
+                editor.add_css_class("title");
+
+                syncing.set(true);
+                editor.set_text(task.title());
+                syncing.set(false);
+
+                editor.connect_changed({
+                    let on_edit = on_edit.clone();
+                    let syncing = syncing.clone();
+                    move |editor| {
+                        if !syncing.get() {
+                            on_edit(editor.text().to_string());
+                        }
+                    }
+                });
+
+                self.row.remove(&self.label);
+                self.row.append(&editor);
+                editor.grab_focus_without_selecting();
+                editor.set_position(-1);
+                self.editor = Some(editor);
+            }
+            return;
+        }
+
+        if let Some(editor) = self.editor.take() {
+            self.row.remove(&editor);
+            self.row.append(&self.label);
+        }
+
+        // An empty task still shows something to underline when selected.
+        let text = if selected && task.title().is_empty() {
+            " "
+        } else {
+            task.title()
+        };
+        if self.label.text() != text {
+            self.label.set_text(text);
+        }
+
+        if selected {
+            self.row.add_css_class("selected");
+        } else {
+            self.row.remove_css_class("selected");
+        }
+    }
+}
+
+pub struct TaskListView {
+    pub scrolled: gtk::ScrolledWindow,
+    content: gtk::Box,
+    /// Task rows, by status, project and task.
+    rows: Vec<Vec<Vec<TaskRow>>>,
+    structure: Option<Structure>,
+    last_cursor_y: Option<usize>,
+    /// Scroll target (top and bottom of the selected row, in pixels) that couldn't be reached yet, because the
+    /// rows were just added and GTK hasn't measured them yet. Applied when the scroll range changes.
+    pending_scroll: Rc<Cell<Option<(f64, f64)>>>,
+    row_height: Rc<Cell<f64>>,
+    on_task_click: OnTaskClick,
+    on_edit: OnEdit,
+    syncing: Rc<Cell<bool>>,
+}
+
+impl TaskListView {
+    pub fn new(on_task_click: OnTaskClick, on_edit: OnEdit, syncing: Rc<Cell<bool>>) -> Self {
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let scrolled = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vscrollbar_policy(gtk::PolicyType::Automatic)
+            .hexpand(true)
+            .vexpand(true)
+            .child(&content)
+            .build();
+
+        let pending_scroll: Rc<Cell<Option<(f64, f64)>>> = Rc::new(Cell::new(None));
+        let row_height = Rc::new(Cell::new(1.0));
+
+        scrolled.vadjustment().connect_changed({
+            let pending_scroll = pending_scroll.clone();
+            let row_height = row_height.clone();
+            move |adjustment| {
+                if let Some((top, bottom)) = pending_scroll.get()
+                    && scroll_into_view(adjustment, top, bottom, row_height.get())
+                {
+                    pending_scroll.set(None);
+                }
+            }
+        });
+
+        Self {
+            scrolled,
+            content,
+            rows: vec![],
+            structure: None,
+            last_cursor_y: None,
+            pending_scroll,
+            row_height,
+            on_task_click,
+            on_edit,
+            syncing,
+        }
+    }
+
+    /// Makes the widgets match the model.
+    ///
+    /// With `scroll`, if the selection moved, scrolls so the selected task is visible. This is used for keyboard
+    /// navigation. Mouse clicks don't scroll (the clicked task is already visible).
+    pub fn update(&mut self, list: &TaskList, has_focus: bool, scroll: bool, row_height: f64) {
+        self.row_height.set(row_height);
+
+        let structure = Structure::of(list);
+        let rebuilt = self.structure.as_ref() != Some(&structure);
+        if rebuilt {
+            self.rebuild(list);
+            self.structure = Some(structure);
+        }
+
+        for (s, status) in list.status_lists().iter().enumerate() {
+            for (p, project) in status.tasks_by_project.iter().enumerate() {
+                let Some(rows) = self.rows.get_mut(s).and_then(|r| r.get_mut(p)) else {
+                    continue;
+                };
+                for (t, (task, row)) in project.tasks.iter().zip(rows.iter_mut()).enumerate() {
+                    let selected = has_focus
+                        && s == list.selected_status_index()
+                        && p == status.selected_project
+                        && t == project.selected_task;
+                    row.update(task, selected, &self.on_edit, &self.syncing);
+                }
+            }
+        }
+
+        let cursor_y = list.cursor_y();
+        if scroll && (rebuilt || self.last_cursor_y != Some(cursor_y)) {
+            let top = cursor_y as f64 * row_height;
+            let bottom = top + row_height;
+            // Stop any kinetic scrolling still going on (e.g. from the mouse wheel or a touchpad), otherwise it
+            // would override the scroll position we set. Disabling kinetic scrolling cancels it.
+            self.scrolled.set_kinetic_scrolling(false);
+            self.scrolled.set_kinetic_scrolling(true);
+
+            let adjustment = self.scrolled.vadjustment();
+            if scroll_into_view(&adjustment, top, bottom, row_height) {
+                self.pending_scroll.set(None);
+            } else {
+                self.pending_scroll.set(Some((top, bottom)));
+            }
+        }
+        self.last_cursor_y = Some(cursor_y);
+    }
+
+    fn rebuild(&mut self, list: &TaskList) {
+        while let Some(child) = self.content.first_child() {
+            self.content.remove(&child);
+        }
+        self.rows.clear();
+
+        let filter = list.project_filter();
+
+        for (s, status) in list.status_lists().iter().enumerate() {
+            self.content.append(&header_row(status.status.as_str()));
+
+            let mut status_rows = vec![];
+            let project_count = status.tasks_by_project.len();
+
+            for (p, project) in status.tasks_by_project.iter().enumerate() {
+                if filter.is_some_and(|f| f != p) {
+                    status_rows.push(vec![]);
+                    continue;
+                }
+
+                let project_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+                project_box.add_css_class("project");
+                let draw_line = filter.is_none();
+                if draw_line {
+                    project_box.add_css_class("line");
+                }
+
+                if project.show_title {
+                    project_box.append(&header_row(&project.project_name));
+                }
+
+                let tasks_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+                tasks_box.add_css_class("tasks");
+                if project.show_title {
+                    tasks_box.add_css_class("indented");
+                }
+
+                let mut project_rows = vec![];
+                for t in 0..project.tasks.len() {
+                    let on_click = self.on_task_click.clone();
+                    let row = TaskRow::new(move |n_press| on_click(s, p, t, n_press));
+                    tasks_box.append(&row.row);
+                    project_rows.push(row);
+                }
+                project_box.append(&tasks_box);
+
+                // An empty row after each project. The line on the left goes through it,
+                // except for the last project.
+                if draw_line && p + 1 < project_count {
+                    project_box.append(&empty_row());
+                    self.content.append(&project_box);
+                } else {
+                    self.content.append(&project_box);
+                    self.content.append(&empty_row());
+                }
+
+                status_rows.push(project_rows);
+            }
+
+            self.rows.push(status_rows);
+        }
+    }
+}
+
+fn header_row(text: &str) -> gtk::Label {
+    let label = gtk::Label::builder()
+        .label(text)
+        .xalign(0.0)
+        .single_line_mode(true)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    label.add_css_class("row");
+    label.add_css_class("header");
+    label
+}
+
+fn empty_row() -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    row.add_css_class("row");
+    row
+}
+
+/// Scrolls so that the range `[top, bottom]` is visible, with some padding around it.
+/// Returns false if the range is beyond what can currently be scrolled to (e.g. rows that GTK hasn't measured yet).
+fn scroll_into_view(adjustment: &gtk::Adjustment, top: f64, bottom: f64, row_height: f64) -> bool {
+    let page = adjustment.page_size();
+    if page <= 0.0 {
+        return false;
+    }
+
+    let padding = (SCROLL_PADDING_ROWS * row_height).min(((page - (bottom - top)) / 2.0).max(0.0));
+    let mut value = adjustment.value();
+    if top - padding < value {
+        value = top - padding;
+    } else if bottom + padding > value + page {
+        value = bottom + padding - page;
+    }
+
+    let max = (adjustment.upper() - page).max(adjustment.lower());
+    adjustment.set_value(value.clamp(adjustment.lower(), max));
+    value <= max + 0.5
+}
