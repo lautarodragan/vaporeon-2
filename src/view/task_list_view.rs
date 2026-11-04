@@ -32,6 +32,9 @@ pub struct DragAndDrop {
     pub drop: Rc<dyn Fn(usize, usize, usize, String) -> bool>,
     /// Called when a drag ends, whether it was dropped or not.
     pub end: Rc<dyn Fn()>,
+    /// Whether dropping at this position (status, project, position between rows) would leave everything as it is,
+    /// i.e. it's where the dragged task already is. No drop indicator is shown there.
+    pub is_noop: Rc<dyn Fn(usize, usize, usize) -> bool>,
 }
 
 /// How many rows to keep visible above and below the selected task, when moving the selection with the keyboard.
@@ -134,9 +137,13 @@ impl TaskRow {
         let target = gtk::DropTarget::new(glib::Type::STRING, gdk::DragAction::MOVE | gdk::DragAction::COPY);
         target.connect_motion({
             let row = row.downgrade();
+            let is_noop = dnd.is_noop.clone();
             move |target, _, y| {
                 if let Some(row) = row.upgrade() {
-                    show_drop_indicator(&row, Some(y < row.height() as f64 / 2.0));
+                    let above = y < row.height() as f64 / 2.0;
+                    let position = if above { task } else { task + 1 };
+                    let indicator = (!is_noop(status, project, position)).then_some(above);
+                    show_drop_indicator(&row, indicator);
                 }
                 // Tasks dragged within the app are moved. Text from other apps is copied.
                 let actions = target

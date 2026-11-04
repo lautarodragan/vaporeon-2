@@ -144,6 +144,17 @@ impl Ui {
                     let dragged = dragged.clone();
                     Rc::new(move || dragged.set(None))
                 },
+                is_noop: {
+                    let dragged = dragged.clone();
+                    Rc::new(move |status, project, position| {
+                        dragged.get().is_some_and(|from| {
+                            from.panel == panel
+                                && from.status == status
+                                && from.project == project
+                                && (position == from.task || position == from.task + 1)
+                        })
+                    })
+                },
             };
 
             let day = TaskListView::new(
