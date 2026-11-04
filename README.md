@@ -90,5 +90,5 @@ Only one instance runs at a time: launching it again focuses the existing window
 
 ## Logs
 
-Logs are written to `vaporeon.log` in the current directory. `--log-events` logs every key press, which
+Logs are written to `$XDG_STATE_HOME/vaporeon/vaporeon.log` (`~/.local/state/vaporeon/vaporeon.log` by default). `--log-events` logs every key press, which
 is useful when writing key bindings in `actions.ini`.

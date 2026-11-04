@@ -51,16 +51,24 @@ impl From<toml::ser::Error> for TomlFileError {
 
 /// `$XDG_CONFIG_HOME/vaporeon`, or `~/.config/vaporeon` if `XDG_CONFIG_HOME` isn't set.
 pub fn get_config_dir_path() -> Result<PathBuf, TomlFileError> {
-    config_dir_path(std::env::var_os("XDG_CONFIG_HOME"), home::home_dir())
+    xdg_dir_path(std::env::var_os("XDG_CONFIG_HOME"), home::home_dir(), ".config")
         .ok_or(TomlFileError::NoPath(".config/vaporeon".to_string()))
 }
 
-fn config_dir_path(xdg_config_home: Option<std::ffi::OsString>, home: Option<PathBuf>) -> Option<PathBuf> {
+/// `$XDG_STATE_HOME/vaporeon`, or `~/.local/state/vaporeon` if `XDG_STATE_HOME` isn't set.
+/// For things worth keeping between runs, but not worth backing up, like logs.
+pub fn get_state_dir_path() -> Option<PathBuf> {
+    xdg_dir_path(std::env::var_os("XDG_STATE_HOME"), home::home_dir(), ".local/state")
+}
+
+/// `<xdg_dir>/vaporeon`, or `<home>/<default>/vaporeon` if `xdg_dir` (the value of an `XDG_*_HOME` variable)
+/// isn't set.
+fn xdg_dir_path(xdg_dir: Option<std::ffi::OsString>, home: Option<PathBuf>, default: &str) -> Option<PathBuf> {
     // Per the XDG spec, relative paths are invalid and must be ignored.
-    let xdg_config_home = xdg_config_home.map(PathBuf::from).filter(|path| path.is_absolute());
-    xdg_config_home
-        .or_else(|| home.map(|home| home.join(".config")))
-        .map(|config| config.join("vaporeon"))
+    let xdg_dir = xdg_dir.map(PathBuf::from).filter(|path| path.is_absolute());
+    xdg_dir
+        .or_else(|| home.map(|home| home.join(default)))
+        .map(|dir| dir.join("vaporeon"))
 }
 
 pub fn get_config_file_path(file_name: &str) -> Result<PathBuf, TomlFileError> {
@@ -115,24 +123,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn config_dir_respects_xdg_config_home() {
+    fn xdg_dirs() {
         let home = Some(PathBuf::from("/home/taro"));
-        assert_eq!(
-            config_dir_path(Some("/xdg/config".into()), home.clone()),
-            Some(PathBuf::from("/xdg/config/vaporeon"))
-        );
-        assert_eq!(
-            config_dir_path(None, home.clone()),
-            Some(PathBuf::from("/home/taro/.config/vaporeon"))
-        );
+        let config = |xdg: Option<&str>| xdg_dir_path(xdg.map(Into::into), home.clone(), ".config");
+        assert_eq!(config(Some("/xdg/config")), Some(PathBuf::from("/xdg/config/vaporeon")));
+        assert_eq!(config(None), Some(PathBuf::from("/home/taro/.config/vaporeon")));
         // Empty or relative: ignored.
+        assert_eq!(config(Some("")), Some(PathBuf::from("/home/taro/.config/vaporeon")));
         assert_eq!(
-            config_dir_path(Some("".into()), home.clone()),
+            config(Some("relative")),
             Some(PathBuf::from("/home/taro/.config/vaporeon"))
         );
-        assert_eq!(
-            config_dir_path(Some("relative".into()), home),
-            Some(PathBuf::from("/home/taro/.config/vaporeon"))
-        );
+
+        let state = |xdg: Option<&str>| xdg_dir_path(xdg.map(Into::into), home.clone(), ".local/state");
+        assert_eq!(state(None), Some(PathBuf::from("/home/taro/.local/state/vaporeon")));
+        assert_eq!(state(Some("/xdg/state")), Some(PathBuf::from("/xdg/state/vaporeon")));
     }
 }

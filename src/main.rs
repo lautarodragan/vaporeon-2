@@ -12,7 +12,7 @@ use crate::{
     log_format::log_format,
     settings::Settings,
     theme::Theme,
-    toml_io::get_config_file_path,
+    toml_io::{get_config_file_path, get_state_dir_path},
     view::Ui,
 };
 
@@ -42,9 +42,18 @@ pub struct App {
 pub type AppRef = Rc<RefCell<App>>;
 
 fn main() -> Result<(), Box<dyn Error>> {
+    // Logs go to $XDG_STATE_HOME/vaporeon/vaporeon.log (~/.local/state/vaporeon/vaporeon.log by default),
+    // or to the current directory if that can't be created.
+    let mut log_file = FileSpec::default().basename("vaporeon").suppress_timestamp();
+    if let Some(state_dir) = get_state_dir_path()
+        && std::fs::create_dir_all(&state_dir).is_ok()
+    {
+        log_file = log_file.directory(state_dir);
+    }
+
     let _logger = flexi_logger::Logger::try_with_str("vaporeon=trace, warn")?
         .format(log_format)
-        .log_to_file(FileSpec::default().suppress_timestamp())
+        .log_to_file(log_file)
         .write_mode(WriteMode::Direct)
         .use_utc()
         .start()?;
