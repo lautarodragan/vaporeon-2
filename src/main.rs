@@ -11,6 +11,7 @@ use crate::{
     components::root::{DataFile, EditTarget, Root},
     log_format::log_format,
     settings::Settings,
+    state::{State, WindowState},
     theme::Theme,
     toml_io::{get_config_file_path, get_state_dir_path},
     view::Ui,
@@ -24,6 +25,7 @@ mod git;
 mod log_format;
 mod models;
 mod settings;
+mod state;
 mod theme;
 mod toml_io;
 mod view;
@@ -130,11 +132,15 @@ fn build_ui(application: &gtk::Application) {
         theme_file_monitor: None,
     }));
 
+    // Window size, as it was when the app was last closed.
+    let window_state = State::load().window;
+
     let window = gtk::ApplicationWindow::builder()
         .application(application)
         .title("Vaporeon")
-        .default_width(1200)
-        .default_height(800)
+        .default_width(window_state.width)
+        .default_height(window_state.height)
+        .maximized(window_state.maximized)
         .build();
     window.add_css_class("vaporeon");
 
@@ -151,6 +157,18 @@ fn build_ui(application: &gtk::Application) {
         let ui = ui.clone();
         move |window| {
             let closing_at = Instant::now();
+
+            // Remember the window size. When maximized, GTK keeps the size from before maximizing, which is what we
+            // want to restore when unmaximizing next time.
+            let (width, height) = window.default_size();
+            State {
+                window: WindowState {
+                    width,
+                    height,
+                    maximized: window.is_maximized(),
+                },
+            }
+            .save();
 
             // Hide the window right away, and only then save: saving (and committing) can take a while,
             // e.g. if git signs commits, and there's no reason to keep the window on screen meanwhile.

@@ -90,6 +90,12 @@ Changes to this file are applied immediately, no need to restart.
 Besides colors, the theme has `font` (any Pango font description), `line_height` and `window_decorations`
 (GTK title bar; off by default).
 
+## Window size
+
+The window size (and whether it's maximized) is remembered between runs, in `$XDG_STATE_HOME/vaporeon/state.toml`
+(`~/.local/state/vaporeon/state.toml` by default). On tiling compositors this only matters for floating windows,
+and window rules (e.g. Hyprland's `size`) take precedence.
+
 ## Hyprland
 
 The window's class (app id) is `codes.taro.Vaporeon`, e.g.:
