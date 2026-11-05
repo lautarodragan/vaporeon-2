@@ -8,7 +8,7 @@ use gtk::{gdk, gio, glib, prelude::*};
 
 use crate::{
     action::{Action, Actions, ApplicationAction, KeyCode, KeyEvent, KeyModifiers, OnActions, TextAction},
-    components::root::{DataFile, EditTarget, Root},
+    components::root::{DataFile, EditTarget, Root, SaveResult},
     log_format::log_format,
     settings::Settings,
     state::{State, WindowState},
@@ -179,7 +179,7 @@ fn build_ui(application: &gtk::Application) {
             let mut app = app.borrow_mut();
             // Whatever is being edited is kept, as if confirmed.
             app.root.finish_editing();
-            // Global first, so it's included in the commit made when saving the day.
+            let mut saved_something = false;
             for file in [DataFile::Global, DataFile::Day] {
                 if conflicts.contains(&file) {
                     // It changed on disk and the user didn't choose what to do yet: don't overwrite it.
@@ -187,12 +187,12 @@ fn build_ui(application: &gtk::Application) {
                     if let Err(err) = app.root.backup(file) {
                         log::error!("Couldn't save a backup of {file:?}: {err:?}");
                     }
-                } else {
-                    match file {
-                        DataFile::Global => app.root.save_global(),
-                        DataFile::Day => app.root.save(),
-                    };
+                } else if app.root.save_file(file) == SaveResult::Saved {
+                    saved_something = true;
                 }
+            }
+            if saved_something {
+                app.root.commit();
             }
             app.settings.save();
             log::debug!("Saved everything in {} ms. Closing.", ms_since(closing_at));
@@ -292,11 +292,13 @@ fn setup_input(app: &AppRef, ui: &Rc<Ui>) {
             if actions.contains(&Action::Application(ApplicationAction::Save)) {
                 {
                     let mut app = app.borrow_mut();
-                    // Global first, so it's included in the commit made when saving the day.
-                    let saved = app.root.save_global() & app.root.save();
-                    if saved {
-                        let date = app.root.selected_date();
-                        app.root.info(format!("Saved {date}."));
+                    match app.root.save_all() {
+                        SaveResult::Saved => {
+                            let date = app.root.selected_date();
+                            app.root.info(format!("Saved {date}."));
+                        }
+                        SaveResult::Unchanged => app.root.info("No changes to save.".to_string()),
+                        SaveResult::Failed => {} // The error was already reported.
                     }
                 }
                 ui.refresh(&app, false);

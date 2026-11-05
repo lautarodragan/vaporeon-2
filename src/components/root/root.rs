@@ -83,39 +83,73 @@ impl Root {
         self.take_snapshot(DataFile::Global);
     }
 
-    /// Saves the selected day, and commits. Returns false if it couldn't be saved (the error is reported as a message).
-    pub fn save(&mut self) -> bool {
+    /// Saves a file, if it has unsaved changes. Doesn't commit: see [`Root::commit`].
+    pub fn save_file(&mut self, file: DataFile) -> SaveResult {
+        // Not writing an unchanged file keeps its modification time, so other programs that have it open
+        // (e.g. an editor) don't think it changed, and there's nothing to commit.
+        if !self.is_dirty(file) {
+            return SaveResult::Unchanged;
+        }
+        let result = match file {
+            DataFile::Day => self.write_day(),
+            DataFile::Global => self.write_global(),
+        };
+        self.take_snapshot(file);
+        result
+    }
+
+    /// Saves the global list and the selected day, if they have unsaved changes, and commits if anything was saved.
+    pub fn save_all(&mut self) -> SaveResult {
+        // Global first, then the day, and a single commit for both.
+        let global = self.save_file(DataFile::Global);
+        let day = self.save_file(DataFile::Day);
+        if global == SaveResult::Saved || day == SaveResult::Saved {
+            self.commit();
+        }
+        global.and(day)
+    }
+
+    fn write_day(&mut self) -> SaveResult {
         let file_name = self.file_name();
-        let mut saved = true;
 
         if self.task_list_day.is_empty() {
-            log::debug!("{file_name} is empty. Skipping save.");
+            log::debug!("{file_name} is empty. Deleting it.");
             let file_name = file_name + ".toml";
             if let Err(err) = remove_file(self.settings.storage_path.as_path().join(file_name.as_str()))
                 && err.kind() != ErrorKind::NotFound
             {
                 self.error(format!("Couldn't delete the empty {file_name}: {err}"));
-                saved = false;
+                return SaveResult::Failed;
             }
         } else {
             let day = self.to_day();
             if let Err(err) = day.to_file(self.settings.storage_path.as_path(), file_name.clone()) {
                 self.error(format!("Couldn't save {file_name}.toml: {err:?}"));
-                saved = false;
+                return SaveResult::Failed;
             };
         }
-        self.take_snapshot(DataFile::Day);
+        SaveResult::Saved
+    }
 
+    fn write_global(&mut self) -> SaveResult {
+        let day = self.to_day_global();
+        match day.to_file(self.settings.storage_path.as_path(), "global".to_string()) {
+            Ok(()) => SaveResult::Saved,
+            Err(err) => {
+                self.error(format!("Couldn't save global.toml: {err:?}"));
+                SaveResult::Failed
+            }
+        }
+    }
+
+    /// Commits the changes in `storage_path`, if it's a git repository.
+    pub fn commit(&self) {
         let git_started_at = std::time::Instant::now();
-        let git_date = git::date_of_most_recent_commit(self.settings.storage_path.as_path());
-        log::debug!("git date: {git_date:?}");
         let git_add_result = git::add(self.settings.storage_path.as_path());
         log::debug!("git add output: {git_add_result:?}");
         let git_commit_result = git::commit(self.settings.storage_path.as_path());
         log::debug!("git commit result: {git_commit_result:?}");
         log::debug!("git took {} ms", git_started_at.elapsed().as_millis());
-
-        saved
     }
 
     pub fn save_as_template(&self) {
@@ -138,30 +172,15 @@ impl Root {
         }
     }
 
-    /// Saves the global task list. Returns false if it couldn't be saved (the error is reported as a message).
-    pub fn save_global(&mut self) -> bool {
-        let file_name = "global".to_string();
-        log::debug!("Want to save {file_name}...");
-
-        let day = self.to_day_global();
-        let saved = match day.to_file(self.settings.storage_path.as_path(), file_name) {
-            Ok(()) => true,
-            Err(err) => {
-                self.error(format!("Couldn't save global.toml: {err:?}"));
-                false
-            }
-        };
-        self.take_snapshot(DataFile::Global);
-        saved
-    }
-
     pub fn selected_date(&self) -> NaiveDate {
         self.selected_date
     }
 
     /// Saves the current day, and loads another one.
     pub fn go_to_date(&mut self, date: NaiveDate) {
-        self.save();
+        if self.save_file(DataFile::Day) == SaveResult::Saved {
+            self.commit();
+        }
         self.selected_date = date;
         self.load_selected_day();
         self.on_selection_change();
@@ -460,6 +479,28 @@ impl Root {
         self.focus_panel(Panel::Right);
         self.task_details
             .on_actions(vec![Action::Text(TextAction::EnterEditMode)]);
+    }
+}
+
+/// What happened when saving.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum SaveResult {
+    Saved,
+    /// There were no unsaved changes, so nothing was written.
+    Unchanged,
+    /// The error was reported as a message.
+    Failed,
+}
+
+impl SaveResult {
+    /// The result of saving two things.
+    fn and(self, other: SaveResult) -> SaveResult {
+        use SaveResult::*;
+        match (self, other) {
+            (Failed, _) | (_, Failed) => Failed,
+            (Saved, _) | (_, Saved) => Saved,
+            (Unchanged, Unchanged) => Unchanged,
+        }
     }
 }
 

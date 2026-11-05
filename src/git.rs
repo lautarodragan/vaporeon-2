@@ -46,6 +46,7 @@ where
     Ok(stdout)
 }
 
+#[allow(dead_code)]
 pub fn date_of_most_recent_commit(path: &Path) -> Result<String, GitError> {
     const DATE: &str = "Date:";
 

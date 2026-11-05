@@ -253,9 +253,28 @@ mod tests {
         add_task(&mut root, "a");
         assert!(root.is_dirty(DataFile::Day));
 
-        root.save();
+        root.save_all();
         assert!(!root.is_dirty(DataFile::Day));
         assert_eq!(root.check_external_change(DataFile::Day), ExternalChange::None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn unchanged_files_are_not_written() {
+        let dir = temp_dir("unchanged");
+        let mut root = root_in(&dir);
+        add_task(&mut root, "a");
+        assert_eq!(root.save_all(), crate::components::root::SaveResult::Saved);
+
+        // Make the file different from what Vaporeon would write, without changing what it means
+        // (as if formatted by hand): saving again must not touch it.
+        let path = root.file_path(DataFile::Day);
+        let hand_formatted = format!("# my comment\n{}", std::fs::read_to_string(&path).unwrap());
+        std::fs::write(&path, &hand_formatted).unwrap();
+        root.take_snapshot(DataFile::Day);
+
+        assert_eq!(root.save_all(), crate::components::root::SaveResult::Unchanged);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), hand_formatted);
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -264,7 +283,7 @@ mod tests {
         let dir = temp_dir("reload");
         let mut root = root_in(&dir);
         add_task(&mut root, "a");
-        root.save();
+        root.save_all();
 
         write_externally(&root, &["a", "b"]);
         assert_eq!(root.check_external_change(DataFile::Day), ExternalChange::Reloaded);
@@ -279,7 +298,7 @@ mod tests {
         let dir = temp_dir("conflict");
         let mut root = root_in(&dir);
         add_task(&mut root, "a");
-        root.save();
+        root.save_all();
         add_task(&mut root, "mine");
         write_externally(&root, &["a", "theirs"]);
 
