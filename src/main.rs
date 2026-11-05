@@ -340,7 +340,9 @@ fn setup_input(app: &AppRef, ui: &Rc<Ui>) {
 
             // While a question is shown in the status bar, only its options respond.
             if ui.is_prompt_active() {
-                if let KeyCode::Char(key) = event.code
+                if event.code == KeyCode::Esc {
+                    ui.dismiss_prompt();
+                } else if let KeyCode::Char(key) = event.code
                     && !event.modifiers.contains(KeyModifiers::CONTROL)
                     && !event.modifiers.contains(KeyModifiers::ALT)
                 {

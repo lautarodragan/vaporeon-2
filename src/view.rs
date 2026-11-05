@@ -21,6 +21,7 @@ use std::{
     time::Duration,
 };
 
+use chrono::Local;
 use gtk::{gio, glib, prelude::*};
 
 use crate::{
@@ -31,6 +32,7 @@ use crate::{
         ExternalChange,
         HEADER_ROWS,
         HeaderLink,
+        MigrationOffer,
         Panel,
         Resolution,
         RightPanel,
@@ -58,6 +60,16 @@ const TWO_PANELS_MIN_WIDTH: f64 = 900.0;
 const FILE_CHANGE_DELAY: Duration = Duration::from_millis(250);
 
 const CONFLICT_OPTIONS: [PromptOption; 3] = [('r', "reload"), ('k', "keep mine"), ('b', "backup mine & reload")];
+const MIGRATION_OPTIONS: [PromptOption; 2] = [('y', "copy them"), ('n', "no")];
+
+/// A question in the status bar, waiting for an answer.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum Prompt {
+    /// A file changed on disk while having unsaved changes.
+    Conflict(DataFile),
+    /// Copy the unfinished tasks of a previous day to today?
+    Migration(MigrationOffer),
+}
 
 pub struct Ui {
     pub window: gtk::ApplicationWindow,
@@ -79,7 +91,7 @@ pub struct Ui {
     /// Files waiting to be checked for changes (see [`FILE_CHANGE_DELAY`]).
     file_checks_scheduled: RefCell<Vec<DataFile>>,
     /// Files that changed on disk while having unsaved changes, waiting for the user to choose what to do.
-    conflicts: RefCell<VecDeque<DataFile>>,
+    prompts: RefCell<VecDeque<Prompt>>,
     app: AppRef,
     this: Weak<Ui>,
 }
@@ -278,7 +290,7 @@ impl Ui {
                 refresh_scroll: Cell::new(false),
                 file_monitors: RefCell::new(HashMap::new()),
                 file_checks_scheduled: RefCell::new(vec![]),
-                conflicts: RefCell::new(VecDeque::new()),
+                prompts: RefCell::new(VecDeque::new()),
                 app: app.clone(),
                 this: ui.clone(),
             }
@@ -304,6 +316,19 @@ impl Ui {
     pub fn refresh(&self, app: &AppRef, scroll: bool) {
         // Everything that changes the model ends up here, so this is where changes are recorded for undoing.
         app.borrow_mut().root.checkpoint();
+
+        // A new day was loaded: maybe offer to copy the unfinished tasks of the previous one.
+        let offer = {
+            let mut app = app.borrow_mut();
+            if app.root.take_day_loaded() {
+                app.root.migration_offer()
+            } else {
+                None
+            }
+        };
+        if let Some(offer) = offer {
+            self.add_prompt(Prompt::Migration(offer));
+        }
 
         for message in app.borrow_mut().root.take_messages() {
             self.status_bar.show_message(&message.text, message.is_error);
@@ -369,28 +394,70 @@ impl Ui {
 
     /// Answers the question in the status bar with the given key. Returns false if it isn't one of the options.
     pub fn answer_prompt(&self, key: char) -> bool {
-        let resolution = match key.to_ascii_lowercase() {
-            'r' => Resolution::Reload,
-            'k' => Resolution::KeepMine,
-            'b' => Resolution::BackupAndReload,
-            _ => return false,
-        };
-        let Some(file) = self.conflicts.borrow_mut().pop_front() else {
+        let Some(prompt) = self.prompts.borrow().front().copied() else {
             return false;
         };
+        let key = key.to_ascii_lowercase();
 
-        self.app.borrow_mut().root.resolve_conflict(file, resolution);
+        match prompt {
+            Prompt::Conflict(file) => {
+                let resolution = match key {
+                    'r' => Resolution::Reload,
+                    'k' => Resolution::KeepMine,
+                    'b' => Resolution::BackupAndReload,
+                    _ => return false,
+                };
+                self.app.borrow_mut().root.resolve_conflict(file, resolution);
+            }
+            Prompt::Migration(offer) => {
+                let mut app = self.app.borrow_mut();
+                match key {
+                    'y' => {
+                        let copied = app.root.copy_unfinished_from(offer.from);
+                        app.root.info(format!("Copied {copied} {}.", tasks(copied)));
+                    }
+                    'n' => app.root.decline_migration(),
+                    _ => return false,
+                }
+            }
+        }
+
+        self.prompts.borrow_mut().pop_front();
         self.status_bar.hide();
         self.panels.set_can_target(true);
         self.header.set_can_target(true);
         self.refresh(&self.app, true);
-        self.show_next_conflict();
+        self.show_next_prompt();
         true
+    }
+
+    /// Esc: says no to the question in the status bar, if that's harmless (e.g. not copying tasks).
+    /// Questions about conflicts need an actual answer.
+    pub fn dismiss_prompt(&self) {
+        // Not inside the `if let`: the borrow would last until its end, and answering changes the prompts.
+        let front = self.prompts.borrow().front().copied();
+        if let Some(Prompt::Migration(_)) = front {
+            self.answer_prompt('n');
+        }
     }
 
     /// Files that changed on disk while having unsaved changes, and for which the user hasn't chosen what to do yet.
     pub fn pending_conflicts(&self) -> Vec<DataFile> {
-        self.conflicts.borrow().iter().copied().collect()
+        self.prompts
+            .borrow()
+            .iter()
+            .filter_map(|prompt| match prompt {
+                Prompt::Conflict(file) => Some(*file),
+                Prompt::Migration(_) => None,
+            })
+            .collect()
+    }
+
+    fn add_prompt(&self, prompt: Prompt) {
+        if !self.prompts.borrow().contains(&prompt) {
+            self.prompts.borrow_mut().push_back(prompt);
+        }
+        self.show_next_prompt();
     }
 
     /// Watches the files currently shown (the selected day changes), to notice when they change on disk.
@@ -455,7 +522,7 @@ impl Ui {
     /// Checks whether a file changed on disk. If so: reloads it if there are no unsaved changes, asks otherwise.
     fn check_file(&self, file: DataFile) {
         // Still waiting for an answer about this file: it'll be dealt with then, with whatever is on disk by then.
-        if self.conflicts.borrow().contains(&file) {
+        if self.prompts.borrow().contains(&Prompt::Conflict(file)) {
             return;
         }
 
@@ -463,23 +530,40 @@ impl Ui {
         match change {
             ExternalChange::None => {}
             ExternalChange::Reloaded => self.refresh(&self.app, true),
-            ExternalChange::Conflict => {
-                self.conflicts.borrow_mut().push_back(file);
-                self.show_next_conflict();
-            }
+            ExternalChange::Conflict => self.add_prompt(Prompt::Conflict(file)),
         }
     }
 
-    fn show_next_conflict(&self) {
+    fn show_next_prompt(&self) {
         if self.status_bar.is_prompt_active() {
             return;
         }
-        let Some(file) = self.conflicts.borrow().front().copied() else {
+        let Some(prompt) = self.prompts.borrow().front().copied() else {
             return;
         };
 
-        let name = self.app.borrow().root.file_display_name(file);
-        let text = format!("{name} changed on disk, and you have unsaved changes.");
+        let (text, options): (String, &[PromptOption]) = match prompt {
+            Prompt::Conflict(file) => {
+                let name = self.app.borrow().root.file_display_name(file);
+                (
+                    format!("{name} changed on disk, and you have unsaved changes."),
+                    &CONFLICT_OPTIONS,
+                )
+            }
+            Prompt::Migration(offer) => {
+                let yesterday = Local::now().date_naive().pred_opt();
+                let when = if Some(offer.from) == yesterday {
+                    "yesterday".to_string()
+                } else {
+                    offer.from.format("on %A %Y-%m-%d").to_string()
+                };
+                let count = offer.count;
+                (
+                    format!("{count} unfinished {} {when}. Copy them to today?", tasks(count)),
+                    &MIGRATION_OPTIONS,
+                )
+            }
+        };
 
         // Clicking an option removes the options, so answer once GTK is done handling the click.
         let on_click: Rc<dyn Fn(char)> = {
@@ -494,11 +578,16 @@ impl Ui {
             })
         };
 
-        self.status_bar.show_prompt(&text, &CONFLICT_OPTIONS, on_click);
+        self.status_bar.show_prompt(&text, options, on_click);
         // Nothing else responds to the mouse until the question is answered.
         self.panels.set_can_target(false);
         self.header.set_can_target(false);
     }
+}
+
+/// "task" or "tasks".
+fn tasks(count: usize) -> &'static str {
+    if count == 1 { "task" } else { "tasks" }
 }
 
 /// Refreshes the UI as soon as GTK is idle. Used from signal handlers (clicks, text changes), where the widgets

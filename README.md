@@ -90,6 +90,12 @@ Changes to this file are applied immediately, no need to restart.
 Besides colors, the theme has `font` (any Pango font description), `line_height` and `window_decorations`
 (GTK title bar; off by default).
 
+## Starting a new day
+
+When opening today's (empty) page, if the last day with tasks (looking back up to two weeks, so Mondays find
+Fridays) has unfinished ones (to do or doing), a question at the bottom offers to copy them: `y` copies them, `n` or
+`Esc` doesn't. Like bullet journal's migration. `Ctrl` `P` copies yesterday's unfinished tasks any time.
+
 ## Undo
 
 `Ctrl` `Z` undoes the last change, and `Ctrl` `Shift` `Z` (or `Ctrl` `Y`) redoes it. Any change can be undone: adding,

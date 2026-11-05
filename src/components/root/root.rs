@@ -15,7 +15,7 @@ use crate::{
         task_list_for_status::TaskListForStatus,
     },
     git,
-    models::{Day, TaskStatus},
+    models::Day,
     settings::Settings,
 };
 
@@ -35,6 +35,10 @@ pub struct Root {
     pub(super) messages: Vec<Message>,
     /// For undo and redo.
     pub(super) history: History,
+    /// Whether a day was just loaded (see [`Root::take_day_loaded`]).
+    pub(super) day_loaded: bool,
+    /// Days for which the user said no to copying the unfinished tasks of a previous day.
+    pub(super) migration_declined: std::collections::HashSet<NaiveDate>,
 }
 
 impl Root {
@@ -52,6 +56,8 @@ impl Root {
             snapshots: Default::default(),
             messages: vec![],
             history: History::default(),
+            day_loaded: false,
+            migration_declined: Default::default(),
         }
     }
 
@@ -75,6 +81,7 @@ impl Root {
         let path = self.file_path(DataFile::Day);
         self.task_list_day.load_file(path.as_path());
         self.take_snapshot(DataFile::Day);
+        self.day_loaded = true;
     }
 
     pub fn load_from_template(&mut self) {
@@ -217,51 +224,7 @@ impl Root {
             log::error!("Failed to selected_date.checked_sub_days(1)");
             return;
         };
-
-        let file_name = previous.format("%Y-%m-%d").to_string();
-        let path = self.settings.storage_path.join(file_name + ".toml");
-        let day = Day::from_file_or_default(path.as_path());
-
-        for task in day.tasks {
-            if task.text.trim().is_empty() {
-                continue;
-            }
-
-            let tasks_by_status = if task.status == TaskStatus::ToDo {
-                &mut self.task_list_day.status_lists_mut()[0]
-            } else if task.status == TaskStatus::Doing {
-                &mut self.task_list_day.status_lists_mut()[1]
-            } else {
-                continue;
-            };
-
-            let Some(project) = tasks_by_status
-                .tasks_by_project
-                .iter_mut()
-                .find(|p| p.project_id == task.project_id)
-            else {
-                log::warn!("Could not find project with id {}", task.project_id);
-                continue;
-            };
-
-            if project.tasks.iter().any(|t| t.as_str() == task.text.as_str()) {
-                continue;
-            }
-
-            let new_task = EditableTask::new(task.text, task.details.unwrap_or_default());
-            let empty_index = project
-                .tasks
-                .iter()
-                .enumerate()
-                .rfind(|(_, e)| e.is_empty())
-                .map(|(i, _)| i);
-
-            if let Some(empty_index) = empty_index {
-                project.tasks.insert(empty_index, new_task);
-            } else {
-                project.tasks.push(new_task);
-            }
-        }
+        self.copy_unfinished_from(previous);
     }
 
     pub fn set_filter(&mut self, project_index: Option<usize>) {
