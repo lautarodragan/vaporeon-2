@@ -79,6 +79,16 @@ impl OnActions for &mut Root {
                         }
                         return;
                     }
+                    NavigationAction::OpenGlobalPanel => {
+                        self.right_panel = RightPanel::GlobalTaskList;
+                        self.selected_panel = 1;
+                        return;
+                    }
+                    NavigationAction::CloseGlobalPanel => {
+                        self.right_panel = RightPanel::Nothing;
+                        self.selected_panel = 0;
+                        return;
+                    }
                     NavigationAction::ToggleDetailsPanel => {
                         if self.right_panel == RightPanel::TaskDetails {
                             self.right_panel = RightPanel::Nothing;
@@ -90,6 +100,19 @@ impl OnActions for &mut Root {
                             self.task_details.set_description(task.description());
                             self.selected_panel = 1;
                         }
+                        return;
+                    }
+                    NavigationAction::OpenDetailsPanel => {
+                        self.right_panel = RightPanel::TaskDetails;
+                        let task = self.task_list_day.selected_status().selected_task();
+                        self.task_details.set_title(task.title());
+                        self.task_details.set_description(task.description());
+                        self.selected_panel = 1;
+                        return;
+                    }
+                    NavigationAction::CloseDetailsPanel => {
+                        self.right_panel = RightPanel::Nothing;
+                        self.selected_panel = 0;
                         return;
                     }
                     NavigationAction::GoToNextDay
