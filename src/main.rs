@@ -31,6 +31,7 @@ mod log_format;
 mod models;
 mod settings;
 mod state;
+mod sync;
 mod theme;
 mod toml_io;
 mod view;
@@ -49,6 +50,8 @@ pub struct App {
     actions: Actions,
     /// Kept around because the file monitor stops working when dropped.
     theme_file_monitor: Option<gio::FileMonitor>,
+    /// Syncing with the git remote. Set once the UI exists.
+    sync: Option<Rc<sync::Sync>>,
 }
 
 pub type AppRef = Rc<RefCell<App>>;
@@ -146,6 +149,7 @@ fn build_ui(application: &gtk::Application) {
         zoom: state.zoom,
         actions,
         theme_file_monitor: None,
+        sync: None,
     }));
 
     let window = gtk::ApplicationWindow::builder()
@@ -158,6 +162,9 @@ fn build_ui(application: &gtk::Application) {
     window.add_css_class("vaporeon");
 
     let ui = Ui::new(&app, window.clone());
+    let storage_path = app.borrow().root.storage_path().to_path_buf();
+    let sync = sync::Sync::new(storage_path.clone(), &app, &ui);
+    app.borrow_mut().sync = Some(sync.clone());
     startup_phase("Built the UI");
     ui.apply_theme(&app.borrow().theme, app.borrow().zoom);
     startup_phase("Applied the theme (CSS, fonts)");
@@ -209,6 +216,11 @@ fn build_ui(application: &gtk::Application) {
                 app.root.commit();
             }
             app.settings.save();
+
+            // Push what's not pushed yet (and pull, so the push isn't rejected). The window is already hidden.
+            if let Err(err) = git::sync(&storage_path) {
+                log::warn!("Couldn't sync with the git remote: {err}");
+            }
             log::debug!("Saved everything in {} ms. Closing.", ms_since(closing_at));
             glib::Propagation::Proceed
         }
@@ -246,6 +258,29 @@ fn build_ui(application: &gtk::Application) {
     // After presenting, so the keyboard focus can be set.
     ui.refresh(&app, true);
     startup_phase("Refreshed the UI");
+
+    sync.sync_now();
+    glib::timeout_add_local(sync::PERIOD, {
+        let sync = Rc::downgrade(&sync);
+        move || match sync.upgrade() {
+            Some(sync) => {
+                sync.sync_now();
+                glib::ControlFlow::Continue
+            }
+            None => glib::ControlFlow::Break,
+        }
+    });
+    // E.g. coming back to the computer after adding tasks from the phone.
+    window.connect_is_active_notify({
+        let sync = Rc::downgrade(&sync);
+        move |window| {
+            if window.is_active()
+                && let Some(sync) = sync.upgrade()
+            {
+                sync.sync_if_stale();
+            }
+        }
+    });
 }
 
 /// Whether `action` ends editing `target`.

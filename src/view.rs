@@ -317,17 +317,26 @@ impl Ui {
         // Everything that changes the model ends up here, so this is where changes are recorded for undoing.
         app.borrow_mut().root.checkpoint();
 
-        // A new day was loaded: maybe offer to copy the unfinished tasks of the previous one.
+        // Push new commits to the git remote (a little later, so a burst of changes is pushed once).
+        let (committed, sync) = {
+            let mut app = app.borrow_mut();
+            (app.root.take_committed(), app.sync.clone())
+        };
+        if committed && let Some(sync) = sync {
+            sync.sync_soon();
+        }
+
+        // A day was loaded (or reloaded): maybe offer to copy the unfinished tasks of the previous one. Or stop
+        // offering it, if it doesn't make sense anymore (e.g. the day was empty, but then tasks were pulled from the
+        // git remote).
         let offer = {
             let mut app = app.borrow_mut();
-            if app.root.take_day_loaded() {
-                app.root.migration_offer()
-            } else {
-                None
-            }
+            app.root.take_day_loaded().then(|| app.root.migration_offer())
         };
-        if let Some(offer) = offer {
-            self.add_prompt(Prompt::Migration(offer));
+        match offer {
+            Some(Some(offer)) => self.add_prompt(Prompt::Migration(offer)),
+            Some(None) => self.remove_migration_prompts(),
+            None => {}
         }
 
         for message in app.borrow_mut().root.take_messages() {
@@ -451,6 +460,19 @@ impl Ui {
                 Prompt::Migration(_) => None,
             })
             .collect()
+    }
+
+    fn remove_migration_prompts(&self) {
+        let showing_migration = matches!(self.prompts.borrow().front(), Some(Prompt::Migration(_)));
+        self.prompts
+            .borrow_mut()
+            .retain(|prompt| !matches!(prompt, Prompt::Migration(_)));
+        if showing_migration {
+            self.status_bar.hide();
+            self.panels.set_can_target(true);
+            self.header.set_can_target(true);
+            self.show_next_prompt();
+        }
     }
 
     fn add_prompt(&self, prompt: Prompt) {

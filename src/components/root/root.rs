@@ -37,6 +37,8 @@ pub struct Root {
     pub(super) history: History,
     /// Whether a day was just loaded (see [`Root::take_day_loaded`]).
     pub(super) day_loaded: bool,
+    /// Whether something was committed (see [`Root::take_committed`]).
+    pub(super) committed: bool,
     /// Days for which the user said no to copying the unfinished tasks of a previous day.
     pub(super) migration_declined: std::collections::HashSet<NaiveDate>,
 }
@@ -57,6 +59,7 @@ impl Root {
             messages: vec![],
             history: History::default(),
             day_loaded: false,
+            committed: false,
             migration_declined: Default::default(),
         }
     }
@@ -156,13 +159,22 @@ impl Root {
     }
 
     /// Commits the changes in `storage_path`, if it's a git repository.
-    pub fn commit(&self) {
+    pub fn commit(&mut self) {
         let git_started_at = std::time::Instant::now();
-        let git_add_result = git::add(self.settings.storage_path.as_path());
-        log::debug!("git add output: {git_add_result:?}");
-        let git_commit_result = git::commit(self.settings.storage_path.as_path());
-        log::debug!("git commit result: {git_commit_result:?}");
+        match git::commit_all(self.settings.storage_path.as_path()) {
+            Ok(committed) => self.committed |= committed,
+            Err(err) => log::debug!("Not committed: {err:?}"),
+        }
         log::debug!("git took {} ms", git_started_at.elapsed().as_millis());
+    }
+
+    /// Whether something was committed since the last call (see [`Root::commit`]). Resets the flag.
+    pub fn take_committed(&mut self) -> bool {
+        std::mem::take(&mut self.committed)
+    }
+
+    pub fn storage_path(&self) -> &std::path::Path {
+        &self.settings.storage_path
     }
 
     pub fn save_as_template(&self) {

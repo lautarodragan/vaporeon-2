@@ -13,6 +13,24 @@ and when closing the window.
 
 A `•` next to the date means the day has unsaved changes. Messages (like "Saved", or errors) show up at the bottom.
 
+### Syncing with a git remote
+
+If `storage_path` is a git repository with a remote (e.g. a private GitHub repository), Vaporeon keeps it in sync:
+it commits whatever isn't committed yet, pulls (merging) and pushes. When starting, a minute after saving (so a
+burst of changes is pushed once), every five minutes, when the window gets the focus, and when closing. Git runs
+in the background, so the UI never waits for the network.
+
+So tasks can be read and added from anywhere: GitHub's web editor, any git client, or an AI assistant with access to
+the repository. Changes pulled from the remote are handled like any other change made outside of Vaporeon (see
+below).
+
+- No remote, no syncing.
+- Git never asks for anything (passwords, passphrases): it has to work non-interactively, e.g. with an ssh agent or
+  a credential helper. Unreachable remotes time out.
+- If your changes and the remote's conflict, the merge is aborted (the repository is never left in the middle of
+  one) and a message asks you to merge them with git.
+- Problems are shown at the bottom, once (not again and again while offline, for example).
+
 ### Changes made outside of Vaporeon
 
 The files of the selected day and of the global list are watched, so editing them in another program (or a
