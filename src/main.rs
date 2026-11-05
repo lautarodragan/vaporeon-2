@@ -1,6 +1,11 @@
 #![allow(clippy::new_without_default)]
 
-use std::{cell::RefCell, error::Error, rc::Rc, time::Instant};
+use std::{
+    cell::{Cell, RefCell},
+    error::Error,
+    rc::Rc,
+    time::Instant,
+};
 
 use chrono::Local;
 use flexi_logger::{FileSpec, WriteMode};
@@ -11,7 +16,7 @@ use crate::{
     components::root::{DataFile, EditTarget, Root, SaveResult},
     log_format::log_format,
     settings::Settings,
-    state::{State, WindowState},
+    state::{State, WindowState, next_zoom},
     theme::Theme,
     toml_io::{get_config_file_path, get_state_dir_path},
     view::Ui,
@@ -35,6 +40,11 @@ const APP_ID: &str = "codes.taro.Vaporeon";
 pub struct App {
     root: Root,
     settings: Settings,
+    /// The theme as configured in theme.toml.
+    base_theme: Theme,
+    /// How big everything is: 1.0 = as configured in the theme. See [`set_zoom`].
+    zoom: f64,
+    /// The theme actually used: `base_theme`, zoomed.
     theme: Theme,
     actions: Actions,
     /// Kept around because the file monitor stops working when dropped.
@@ -124,16 +134,19 @@ fn build_ui(application: &gtk::Application) {
     root.load_global();
     startup_phase("Loaded tasks");
 
+    // Window size and zoom, as they were when the app was last closed.
+    let state = State::load();
+    let window_state = state.window;
+
     let app: AppRef = Rc::new(RefCell::new(App {
         root,
         settings,
-        theme,
+        theme: theme.zoomed(state.zoom),
+        base_theme: theme,
+        zoom: state.zoom,
         actions,
         theme_file_monitor: None,
     }));
-
-    // Window size, as it was when the app was last closed.
-    let window_state = State::load().window;
 
     let window = gtk::ApplicationWindow::builder()
         .application(application)
@@ -146,7 +159,7 @@ fn build_ui(application: &gtk::Application) {
 
     let ui = Ui::new(&app, window.clone());
     startup_phase("Built the UI");
-    ui.apply_theme(&app.borrow().theme);
+    ui.apply_theme(&app.borrow().theme, app.borrow().zoom);
     startup_phase("Applied the theme (CSS, fonts)");
 
     setup_input(&app, &ui);
@@ -167,6 +180,7 @@ fn build_ui(application: &gtk::Application) {
                     height,
                     maximized: window.is_maximized(),
                 },
+                zoom: app.borrow().zoom,
             }
             .save();
 
@@ -248,7 +262,63 @@ fn ends_editing(target: EditTarget, action: &Action) -> bool {
     )
 }
 
+/// Zooms in (`direction` > 0), out (< 0), or back to 100% (0).
+fn zoom(app: &AppRef, ui: &Rc<Ui>, direction: i32) {
+    let zoom = match direction {
+        0 => 1.0,
+        _ => next_zoom(app.borrow().zoom, direction),
+    };
+    set_zoom(app, ui, zoom);
+}
+
+fn set_zoom(app: &AppRef, ui: &Rc<Ui>, zoom: f64) {
+    {
+        let mut app = app.borrow_mut();
+        if app.zoom == zoom {
+            return;
+        }
+        app.zoom = zoom;
+        app.theme = app.base_theme.zoomed(zoom);
+        app.root.info(format!("Zoom: {}%", (zoom * 100.0).round()));
+    }
+    ui.apply_theme(&app.borrow().theme, zoom);
+    ui.refresh(&app, true);
+}
+
 fn setup_input(app: &AppRef, ui: &Rc<Ui>) {
+    // Ctrl + mouse wheel (or touchpad scrolling) zooms, like in browsers.
+    // Capture phase, so it happens before the lists scroll.
+    let scroll_controller = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
+    scroll_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let scrolled = Rc::new(Cell::new(0.0));
+    scroll_controller.connect_scroll({
+        let app = app.clone();
+        let ui = Rc::downgrade(ui);
+        move |controller, _, dy| {
+            if !controller
+                .current_event_state()
+                .contains(gdk::ModifierType::CONTROL_MASK)
+            {
+                return glib::Propagation::Proceed;
+            }
+            let Some(ui) = ui.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            if ui.is_prompt_active() {
+                return glib::Propagation::Stop;
+            }
+            // A mouse wheel scrolls one unit per notch; touchpads scroll in many small steps. Zoom once per unit.
+            scrolled.set(scrolled.get() + dy);
+            while scrolled.get().abs() >= 1.0 {
+                let direction = -scrolled.get().signum();
+                scrolled.set(scrolled.get() + direction);
+                zoom(&app, &ui, direction as i32);
+            }
+            glib::Propagation::Stop
+        }
+    });
+    ui.window.add_controller(scroll_controller);
+
     let key_controller = gtk::EventControllerKey::new();
 
     // Capture phase: we see key presses before the focused widget (e.g. a text editor) does.
@@ -287,6 +357,17 @@ fn setup_input(app: &AppRef, ui: &Rc<Ui>) {
             if actions.contains(&Action::Application(ApplicationAction::Quit)) {
                 ui.window.close();
                 return glib::Propagation::Stop;
+            }
+
+            for (action, direction) in [
+                (ApplicationAction::ZoomIn, 1),
+                (ApplicationAction::ZoomOut, -1),
+                (ApplicationAction::ZoomReset, 0),
+            ] {
+                if actions.contains(&Action::Application(action)) {
+                    zoom(&app, &ui, direction);
+                    return glib::Propagation::Stop;
+                }
             }
 
             if actions.contains(&Action::Application(ApplicationAction::Save)) {
@@ -409,11 +490,13 @@ fn watch_theme_file(app: &AppRef, ui: &Rc<Ui>) {
             }
             log::debug!("Theme file changed. Reloading it.");
             let theme = Theme::load();
-            if let Some(ui) = ui.upgrade() {
-                ui.apply_theme(&theme);
+            {
+                let mut app = app.borrow_mut();
+                app.theme = theme.zoomed(app.zoom);
+                app.base_theme = theme;
             }
-            app.borrow_mut().theme = theme;
             if let Some(ui) = ui.upgrade() {
+                ui.apply_theme(&app.borrow().theme, app.borrow().zoom);
                 ui.refresh(&app, false);
             }
         }

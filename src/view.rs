@@ -51,7 +51,8 @@ mod style;
 mod task_list_view;
 
 /// Below this width (in pixels), only one panel is shown, using the full width.
-const TWO_PANELS_MIN_WIDTH: i32 = 900;
+/// At 100% zoom: it's scaled with the zoom.
+const TWO_PANELS_MIN_WIDTH: f64 = 900.0;
 
 /// How long to wait after a file changes before checking it. Programs (and git) often write files in several steps.
 const FILE_CHANGE_DELAY: Duration = Duration::from_millis(250);
@@ -70,6 +71,7 @@ pub struct Ui {
     details: RefCell<DetailsView>,
     css: gtk::CssProvider,
     metrics: Cell<Metrics>,
+    zoom: Cell<f64>,
     refresh_scheduled: Cell<bool>,
     refresh_scroll: Cell<bool>,
     /// The file being watched for changes, for each data file, and its monitor.
@@ -239,11 +241,9 @@ impl Ui {
                 move |_, _, _| schedule_refresh(&ui, &app, false)
             });
 
-            let main_box = gtk::Box::builder()
-                .orientation(gtk::Orientation::Vertical)
-                .margin_start(WINDOW_PADDING)
-                .margin_end(WINDOW_PADDING)
-                .build();
+            let main_box = gtk::Box::builder().orientation(gtk::Orientation::Vertical).build();
+            // Its margins are set in CSS, so they scale with the zoom.
+            main_box.add_css_class("main");
             let status_bar = StatusBar::new();
 
             main_box.append(&header);
@@ -273,6 +273,7 @@ impl Ui {
                 details: RefCell::new(details),
                 css,
                 metrics: Cell::new(metrics),
+                zoom: Cell::new(1.0),
                 refresh_scheduled: Cell::new(false),
                 refresh_scroll: Cell::new(false),
                 file_monitors: RefCell::new(HashMap::new()),
@@ -285,10 +286,13 @@ impl Ui {
     }
 
     /// Applies colors, font, etc. Called on startup and when the theme file changes.
-    pub fn apply_theme(&self, theme: &Theme) {
+    ///
+    /// `theme` must already be zoomed (see [`Theme::zoomed`]); `zoom` is used to scale the spacing.
+    pub fn apply_theme(&self, theme: &Theme, zoom: f64) {
         let metrics = Metrics::new(&self.header.pango_context(), theme);
         self.metrics.set(metrics);
-        self.css.load_from_string(&style::css(theme, &metrics));
+        self.zoom.set(zoom);
+        self.css.load_from_string(&style::css(theme, &metrics, zoom));
         self.header
             .set_content_height((metrics.line_height * HEADER_ROWS).round() as i32);
         self.window.set_decorated(theme.window_decorations);
@@ -329,10 +333,10 @@ impl Ui {
         });
 
         let width = match self.main_box.width() {
-            0 => self.window.default_width() - 2 * WINDOW_PADDING,
+            0 => self.window.default_width() - (2.0 * WINDOW_PADDING * self.zoom.get()) as i32,
             width => width,
         };
-        let single_panel = width < TWO_PANELS_MIN_WIDTH;
+        let single_panel = (width as f64) < TWO_PANELS_MIN_WIDTH * self.zoom.get();
         self.day
             .borrow()
             .scrolled

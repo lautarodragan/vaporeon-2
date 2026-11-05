@@ -7,18 +7,24 @@ use crate::{
     theme::{Color, Theme},
 };
 
-/// Left and right padding of the whole window, in pixels.
-pub const WINDOW_PADDING: i32 = 20;
+// Spacing, in pixels, at 100% zoom. Multiplied by the zoom (see [`css`]).
+
+/// Left and right padding of the whole window.
+pub const WINDOW_PADDING: f64 = 20.0;
 /// Indentation of the projects inside a status list ("TODO", "DONE", etc.).
-const STATUS_INDENT: i32 = 10;
+const STATUS_INDENT: f64 = 10.0;
 /// Extra indentation of the projects when the vertical line on their left is shown.
-const STATUS_LINE_INDENT: i32 = 20;
-/// Width of the vertical line on the left of the projects.
-const LINE_WIDTH: i32 = 1;
+const STATUS_LINE_INDENT: f64 = 20.0;
+/// Width of the vertical line on the left of the projects. Not zoomed: a line is a line.
+const LINE_WIDTH: f64 = 1.0;
 /// Indentation of the tasks inside a project.
-const PROJECT_INDENT: i32 = 10;
+const PROJECT_INDENT: f64 = 10.0;
 /// Space taken by the `-` before each task.
-pub const BULLET_WIDTH: i32 = 20;
+const BULLET_WIDTH: f64 = 20.0;
+/// Space between the options of a question in the status bar.
+const OPTION_GAP: f64 = 20.0;
+/// Space between the key of an option and its description.
+const KEY_GAP: f64 = 6.0;
 
 fn css_color(color: Color) -> String {
     format!(
@@ -52,7 +58,16 @@ fn css_font(font: &pango::FontDescription) -> String {
     format!("font-family: \"{family}\"; {size} font-weight: {weight}; font-style: {style};")
 }
 
-pub fn css(theme: &Theme, metrics: &Metrics) -> String {
+/// `theme` must already be zoomed (see [`Theme::zoomed`]); `zoom` is used to scale the spacing.
+pub fn css(theme: &Theme, metrics: &Metrics, zoom: f64) -> String {
+    let px = |value: f64| (value * zoom).round();
+    let window_padding = px(WINDOW_PADDING);
+    let status_indent = px(STATUS_INDENT);
+    let status_line_indent = px(STATUS_LINE_INDENT);
+    let project_indent = px(PROJECT_INDENT);
+    let bullet_width = px(BULLET_WIDTH);
+    let option_gap = px(OPTION_GAP);
+    let key_gap = px(KEY_GAP);
     let background = css_color(theme.window_background());
     let entry = css_color(theme.list_entry);
     let entry_dim = css_color(theme.list_entry.dimmed());
@@ -64,7 +79,7 @@ pub fn css(theme: &Theme, metrics: &Metrics) -> String {
     let selection = css_color(theme.list_header.with_alpha(0.35));
     let font = css_font(&theme.font_description());
     let row_height = metrics.line_height;
-    let line_margin = STATUS_INDENT - LINE_WIDTH;
+    let line_margin = status_indent - LINE_WIDTH;
 
     format!(
         "
@@ -125,6 +140,11 @@ window.vaporeon selection {{
     color: {entry};
 }}
 
+window.vaporeon .main {{
+    margin-left: {window_padding}px;
+    margin-right: {window_padding}px;
+}}
+
 /* Every line of the lists is exactly one row tall. */
 window.vaporeon .row {{
     min-height: {row_height}px;
@@ -144,35 +164,35 @@ window.vaporeon textview.dim > text {{
 
 window.vaporeon .bullet {{
     color: {decoration};
-    min-width: {BULLET_WIDTH}px;
+    min-width: {bullet_width}px;
 }}
 
 window.vaporeon .project {{
-    margin-left: {STATUS_INDENT}px;
+    margin-left: {status_indent}px;
 }}
 
 window.vaporeon .project.line {{
     margin-left: {line_margin}px;
     border-left: {LINE_WIDTH}px solid {line};
-    padding-left: {STATUS_LINE_INDENT}px;
+    padding-left: {status_line_indent}px;
 }}
 
 window.vaporeon .tasks.indented {{
-    margin-left: {PROJECT_INDENT}px;
+    margin-left: {project_indent}px;
 }}
 
 /* Status bar: messages and questions, at the bottom. */
 window.vaporeon .status-bar .options {{
-    margin-left: 20px;
+    margin-left: {option_gap}px;
 }}
 
 window.vaporeon .status-bar .option {{
-    margin-right: 20px;
+    margin-right: {option_gap}px;
 }}
 
 window.vaporeon .status-bar .key {{
     color: {header};
-    margin-right: 6px;
+    margin-right: {key_gap}px;
 }}
 
 /* Where a dragged task would be dropped. A 2px line centered on the border between rows (1px inside the row,

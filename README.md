@@ -90,9 +90,14 @@ Changes to this file are applied immediately, no need to restart.
 Besides colors, the theme has `font` (any Pango font description), `line_height` and `window_decorations`
 (GTK title bar; off by default).
 
+## Zoom
+
+`Ctrl` `+` (or `Ctrl` `=`) and `Ctrl` `-` make everything bigger or smaller (text, rows, spacing), like in a browser;
+`Ctrl` `0` goes back to 100%. So does `Ctrl` + mouse wheel. The zoom is remembered between runs.
+
 ## Window size
 
-The window size (and whether it's maximized) is remembered between runs, in `$XDG_STATE_HOME/vaporeon/state.toml`
+The window size (and whether it's maximized) is remembered between runs, like the zoom, in `$XDG_STATE_HOME/vaporeon/state.toml`
 (`~/.local/state/vaporeon/state.toml` by default). On tiling compositors this only matters for floating windows,
 and window rules (e.g. Hyprland's `size`) take precedence.
 

@@ -11,10 +11,7 @@ use std::{
 
 use gtk::{gdk, glib, prelude::*};
 
-use crate::{
-    components::{EditableTask, task_list::TaskList},
-    view::style::BULLET_WIDTH,
-};
+use crate::components::{EditableTask, task_list::TaskList};
 
 /// Called when a task is clicked, with the indices of its status, project and task, and the number of clicks
 /// (2 for a double click).
@@ -81,7 +78,6 @@ impl TaskRow {
 
         let bullet = gtk::Label::builder().label("-").xalign(0.0).build();
         bullet.add_css_class("bullet");
-        bullet.set_size_request(BULLET_WIDTH, -1);
 
         let label = gtk::Label::builder()
             .xalign(0.0)

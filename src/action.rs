@@ -194,6 +194,9 @@ pub enum ApplicationAction {
     Save,
     Paste,
     PasteText(String),
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
 }
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug, Hash, EnumString, Ord, PartialOrd)]
@@ -293,7 +296,8 @@ impl Actions {
 
         s.lines()
             .filter(|line| line.len() >= 3 && !line.trim().starts_with('#'))
-            .map(|line| line.split('=').collect::<Vec<&str>>())
+            // Only the first `=` separates the action from its keys, so `=` itself can be a key (e.g. `Ctrl=`).
+            .filter_map(|line| line.split_once('='))
             .filter_map(str_to_action_keys)
             .for_each(|(action, bindings)| {
                 bindings.split(' ').filter_map(str_to_binding).for_each(|binding| {
@@ -347,14 +351,8 @@ pub trait OnActions<T = Action, R = ()> {
     fn on_actions(self, actions: Vec<T>) -> R;
 }
 
-fn str_to_action_keys(split: Vec<&str>) -> Option<(Action, &str)> {
-    if let [value, keys] = split[..]
-        && let Ok(action) = Action::try_from(value)
-    {
-        Some((action, keys))
-    } else {
-        None
-    }
+fn str_to_action_keys<'a>((value, keys): (&'a str, &'a str)) -> Option<(Action, &'a str)> {
+    Action::try_from(value.trim()).ok().map(|action| (action, keys.trim()))
 }
 
 fn str_to_binding(binding: &str) -> Option<KeyBinding> {
@@ -465,6 +463,27 @@ mod tests {
         assert!(
             actions_for(KeyCode::BackTab, KeyModifiers::SHIFT)
                 .contains(&Action::Navigation(NavigationAction::FocusPrevious))
+        );
+    }
+
+    #[test]
+    fn zoom_bindings() {
+        let zoom_in = Action::Application(ApplicationAction::ZoomIn);
+        // Ctrl and + (Shift+= on US keyboards: Shift isn't reported for symbols), Ctrl and =, and the keypad's +.
+        assert!(actions_for(KeyCode::Char('+'), KeyModifiers::CONTROL).contains(&zoom_in));
+        assert!(actions_for(KeyCode::Char('='), KeyModifiers::CONTROL).contains(&zoom_in));
+        assert!(
+            actions_for(KeyCode::Char('-'), KeyModifiers::CONTROL)
+                .contains(&Action::Application(ApplicationAction::ZoomOut))
+        );
+        assert!(
+            actions_for(KeyCode::Char('0'), KeyModifiers::CONTROL)
+                .contains(&Action::Application(ApplicationAction::ZoomReset))
+        );
+        // Without Ctrl, 0 still clears the project filter.
+        assert!(
+            !actions_for(KeyCode::Char('0'), KeyModifiers::NONE)
+                .contains(&Action::Application(ApplicationAction::ZoomReset))
         );
     }
 

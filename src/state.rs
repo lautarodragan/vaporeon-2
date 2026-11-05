@@ -38,10 +38,42 @@ impl WindowState {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone, Copy, PartialEq, Eq)]
+/// The zoom levels Ctrl+ and Ctrl- go through, like browsers do.
+pub const ZOOM_LEVELS: [f64; 13] = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(default)]
 pub struct State {
     pub window: WindowState,
+    /// How big everything is (fonts, spacing...), 1.0 being the size set in the theme.
+    pub zoom: f64,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            window: WindowState::default(),
+            zoom: 1.0,
+        }
+    }
+}
+
+/// The next zoom level, bigger (`direction` > 0) or smaller (< 0) than `zoom`.
+pub fn next_zoom(zoom: f64, direction: i32) -> f64 {
+    let next = if direction > 0 {
+        ZOOM_LEVELS.iter().find(|&&level| level > zoom + 0.001)
+    } else {
+        ZOOM_LEVELS.iter().rev().find(|&&level| level < zoom - 0.001)
+    };
+    next.copied().unwrap_or(zoom)
+}
+
+fn clamp_zoom(zoom: f64) -> f64 {
+    if zoom.is_finite() {
+        zoom.clamp(ZOOM_LEVELS[0], ZOOM_LEVELS[ZOOM_LEVELS.len() - 1])
+    } else {
+        1.0
+    }
 }
 
 impl State {
@@ -72,6 +104,7 @@ impl State {
         let state: State = toml::from_str(text)?;
         Ok(State {
             window: state.window.sanitized(),
+            zoom: clamp_zoom(state.zoom),
         })
     }
 
@@ -103,8 +136,21 @@ mod tests {
                 height: 600,
                 maximized: true,
             },
+            zoom: 1.25,
         };
         assert_eq!(State::from_str(&toml::to_string(&state).unwrap()).unwrap(), state);
+    }
+
+    #[test]
+    fn zoom_levels() {
+        assert_eq!(next_zoom(1.0, 1), 1.1);
+        assert_eq!(next_zoom(1.0, -1), 0.9);
+        assert_eq!(next_zoom(3.0, 1), 3.0);
+        assert_eq!(next_zoom(0.5, -1), 0.5);
+        // In between levels (e.g. edited by hand): goes to the nearest one in that direction.
+        assert_eq!(next_zoom(1.3, 1), 1.5);
+        assert_eq!(next_zoom(1.3, -1), 1.25);
+        assert_eq!(State::from_str("zoom = 99").unwrap().zoom, 3.0);
     }
 
     #[test]

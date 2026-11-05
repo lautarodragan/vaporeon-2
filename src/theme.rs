@@ -143,6 +143,26 @@ impl Theme {
     pub fn font_description(&self) -> pango::FontDescription {
         pango::FontDescription::from_string(&self.font)
     }
+
+    /// The same theme, with the font scaled by `zoom` (1.0 = as configured).
+    pub fn zoomed(&self, zoom: f64) -> Theme {
+        let mut font = self.font_description();
+        // Fonts without a size get Pango's default, 10pt.
+        let size = match font.size() {
+            0 => 10.0 * pango::SCALE as f64,
+            size => size as f64,
+        };
+        let zoomed = (size * zoom).round() as i32;
+        if font.is_size_absolute() {
+            font.set_absolute_size(zoomed as f64);
+        } else {
+            font.set_size(zoomed);
+        }
+        Theme {
+            font: font.to_string(),
+            ..self.clone()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -162,6 +182,17 @@ mod tests {
         assert_eq!(theme.background_opacity, 0.0);
         assert_eq!(theme.list_entry, Color::rgba(1.0, 0.0, 0.0, 128.0 / 255.0));
         assert_eq!(theme.font, Theme::default().font);
+    }
+
+    #[test]
+    fn zoom_scales_the_font() {
+        let theme = Theme::from_str_with_defaults("font = \"Iosevka Term 10\"").unwrap();
+        assert_eq!(theme.zoomed(1.5).font_description().size(), 15 * pango::SCALE);
+        assert_eq!(theme.zoomed(1.5).font_description().family().unwrap(), "Iosevka Term");
+        assert_eq!(theme.zoomed(1.0), theme);
+        // No size: zooms from Pango's default.
+        let theme = Theme::from_str_with_defaults("font = \"Monospace\"").unwrap();
+        assert_eq!(theme.zoomed(2.0).font_description().size(), 20 * pango::SCALE);
     }
 
     #[test]
