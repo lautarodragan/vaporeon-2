@@ -52,6 +52,11 @@ fn ms_since_started() -> u128 {
     STARTED_AT.get().map(|s| ms_since(*s)).unwrap_or_default()
 }
 
+/// Logs that a phase of starting up is done, and when. To find out what's slow when starting feels slow.
+fn startup_phase(phase: &str) {
+    log::debug!("{phase}, {} ms after starting", ms_since_started());
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     STARTED_AT.get_or_init(Instant::now);
 
@@ -85,7 +90,16 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn build_ui(application: &gtk::Application) {
-    log::debug!("GTK initialized, {} ms after starting", ms_since_started());
+    startup_phase("GTK initialized");
+    log::debug!(
+        "GTK {}.{}.{}, display: {}",
+        gtk::major_version(),
+        gtk::minor_version(),
+        gtk::micro_version(),
+        gdk::Display::default()
+            .map(|d| d.type_().name().to_string())
+            .unwrap_or_default(),
+    );
 
     // Activating an already-running instance (e.g. launching it twice) just focuses the existing window.
     if let Some(window) = application.active_window() {
@@ -101,10 +115,12 @@ fn build_ui(application: &gtk::Application) {
 
     let settings = Settings::load();
     let theme = Theme::load();
+    startup_phase("Loaded settings and theme");
 
     let mut root = Root::new(settings.clone());
     root.load_selected_day();
     root.load_global();
+    startup_phase("Loaded tasks");
 
     let app: AppRef = Rc::new(RefCell::new(App {
         root,
@@ -123,7 +139,9 @@ fn build_ui(application: &gtk::Application) {
     window.add_css_class("vaporeon");
 
     let ui = Ui::new(&app, window.clone());
+    startup_phase("Built the UI");
     ui.apply_theme(&app.borrow().theme);
+    startup_phase("Applied the theme (CSS, fonts)");
 
     setup_input(&app, &ui);
     watch_theme_file(&app, &ui);
@@ -181,15 +199,21 @@ fn build_ui(application: &gtk::Application) {
         }
     });
 
+    window.connect_realize(|_| startup_phase("Window realized"));
+    window.connect_map(|_| startup_phase("Window mapped"));
     window.present();
+    startup_phase("Window presented");
 
     // Log how long it took to show something on screen. Ticks happen right before drawing a frame.
-    window.add_tick_callback(|_, _| {
-        log::debug!("First frame, {} ms after starting", ms_since_started());
+    window.add_tick_callback(|window, _| {
+        startup_phase("First frame");
+        let renderer = window.renderer().map(|r| r.type_().name().to_string());
+        log::debug!("Renderer: {}", renderer.unwrap_or_default());
         glib::ControlFlow::Break
     });
     // After presenting, so the keyboard focus can be set.
     ui.refresh(&app, true);
+    startup_phase("Refreshed the UI");
 }
 
 /// Whether `action` ends editing `target`.
