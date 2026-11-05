@@ -282,7 +282,7 @@ fn set_zoom(app: &AppRef, ui: &Rc<Ui>, zoom: f64) {
         app.root.info(format!("Zoom: {}%", (zoom * 100.0).round()));
     }
     ui.apply_theme(&app.borrow().theme, zoom);
-    ui.refresh(&app, true);
+    ui.refresh(app, true);
 }
 
 fn setup_input(app: &AppRef, ui: &Rc<Ui>) {
