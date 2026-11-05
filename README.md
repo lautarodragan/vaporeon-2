@@ -31,7 +31,7 @@ Everything can still be done with the keyboard, but you can also:
 - click a task to select it,
 - click a day of the week, in the header, to go to that day (or the arrows, to go back to today),
 - double click a task to edit it,
-- click a task's description, in the details panel (`D`), to edit it,
+- click a task's description, in the details panel (`Space`), to edit it,
 - scroll with the mouse wheel or touchpad,
 - drag and drop tasks: to reorder them, or to move them to another project, status (e.g. from TODO to DONE), or
   to the other panel (between the day and the global list). Dragging near the top or bottom edge scrolls the list.
@@ -89,6 +89,14 @@ Changes to this file are applied immediately, no need to restart.
 
 Besides colors, the theme has `font` (any Pango font description), `line_height` and `window_decorations`
 (GTK title bar; off by default).
+
+## Undo
+
+`Ctrl` `Z` undoes the last change, and `Ctrl` `Shift` `Z` (or `Ctrl` `Y`) redoes it. Any change can be undone: adding,
+deleting, editing or moving tasks, drag and drop, etc. Editing a task, from starting to confirming, is a single step
+(while editing, `Ctrl` `Z` undoes text changes instead, like in any text box).
+
+The history starts over when going to another day, or when a file is reloaded because it changed outside of Vaporeon.
 
 ## Zoom
 

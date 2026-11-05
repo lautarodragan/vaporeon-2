@@ -178,6 +178,8 @@ impl Root {
             DataFile::Global => self.load_global(),
         }
         self.on_selection_change();
+        // Undoing shouldn't bring back what was there before reloading.
+        self.reset_history();
     }
 
     pub fn info(&mut self, text: String) {

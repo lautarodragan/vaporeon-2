@@ -197,6 +197,8 @@ pub enum ApplicationAction {
     ZoomIn,
     ZoomOut,
     ZoomReset,
+    Undo,
+    Redo,
 }
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug, Hash, EnumString, Ord, PartialOrd)]
@@ -458,7 +460,7 @@ mod tests {
             Action::Application(ApplicationAction::Quit)
         ]);
         assert_eq!(actions_for(KeyCode::Char('g'), KeyModifiers::NONE), vec![
-            Action::Navigation(NavigationAction::ToggleGlobalPanel),
+            Action::Navigation(NavigationAction::OpenGlobalPanel),
         ]);
         assert_eq!(actions_for(KeyCode::Enter, KeyModifiers::CONTROL), vec![
             Action::Task(TaskAction::Create),
@@ -489,6 +491,15 @@ mod tests {
             !actions_for(KeyCode::Char('0'), KeyModifiers::NONE)
                 .contains(&Action::Application(ApplicationAction::ZoomReset))
         );
+    }
+
+    #[test]
+    fn undo_bindings() {
+        let undo = Action::Application(ApplicationAction::Undo);
+        let redo = Action::Application(ApplicationAction::Redo);
+        assert!(actions_for(KeyCode::Char('z'), KeyModifiers::CONTROL).contains(&undo));
+        assert!(actions_for(KeyCode::Char('Z'), KeyModifiers::CONTROL | KeyModifiers::SHIFT).contains(&redo));
+        assert!(actions_for(KeyCode::Char('y'), KeyModifiers::CONTROL).contains(&redo));
     }
 
     #[test]

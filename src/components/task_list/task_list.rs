@@ -151,6 +151,16 @@ impl TaskList {
         self.select(status, project, index)
     }
 
+    /// Indices of the selected status, project and task.
+    pub fn selection(&self) -> (usize, usize, usize) {
+        let status = self.selected_status();
+        (
+            self.selected_status_list,
+            status.selected_project,
+            status.selected_project().selected_task,
+        )
+    }
+
     /// Whether there is such a status and project.
     pub fn has_project(&self, status: usize, project: usize) -> bool {
         self.status_lists
@@ -188,8 +198,11 @@ impl TaskList {
     }
 
     pub fn load_file(&mut self, file_name: &Path) {
-        let day = Day::from_file_or_default(file_name);
+        self.load_day(Day::from_file_or_default(file_name));
+    }
 
+    /// Shows the tasks of `day`. The selection goes back to the first task.
+    pub fn load_day(&mut self, day: Day) {
         let visible_projects = self.settings.visible_projects();
         // Tasks whose project is hidden (or no longer exists as a visible project)
         // are set aside so they don't show up in the UI but aren't lost on save.

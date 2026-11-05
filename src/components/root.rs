@@ -1,6 +1,7 @@
 mod actions;
 mod files;
 mod header;
+mod history;
 mod root;
 
 pub use files::{DataFile, ExternalChange, Resolution};

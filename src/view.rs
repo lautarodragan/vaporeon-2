@@ -302,6 +302,9 @@ impl Ui {
     ///
     /// `scroll`: whether to scroll to the selected task if it moved (for keyboard navigation).
     pub fn refresh(&self, app: &AppRef, scroll: bool) {
+        // Everything that changes the model ends up here, so this is where changes are recorded for undoing.
+        app.borrow_mut().root.checkpoint();
+
         for message in app.borrow_mut().root.take_messages() {
             self.status_bar.show_message(&message.text, message.is_error);
         }

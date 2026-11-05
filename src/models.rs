@@ -26,7 +26,7 @@ impl Project {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Day {
     pub date_time: NaiveDate,
     pub tasks: Vec<Task>,
@@ -115,7 +115,7 @@ impl Day {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Task {
     pub text: String,
     pub project_id: usize,

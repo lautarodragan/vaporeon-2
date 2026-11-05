@@ -412,6 +412,20 @@ fn setup_input(app: &AppRef, ui: &Rc<Ui>) {
                 return glib::Propagation::Proceed;
             }
 
+            let undo = actions.contains(&Action::Application(ApplicationAction::Undo));
+            if undo || actions.contains(&Action::Application(ApplicationAction::Redo)) {
+                {
+                    let mut app = app.borrow_mut();
+                    let done = if undo { app.root.undo() } else { app.root.redo() };
+                    if !done {
+                        let what = if undo { "undo" } else { "redo" };
+                        app.root.info(format!("Nothing to {what}."));
+                    }
+                }
+                ui.refresh(&app, true);
+                return glib::Propagation::Stop;
+            }
+
             if actions.contains(&Action::Application(ApplicationAction::Paste)) {
                 paste(&app, &ui);
             } else {

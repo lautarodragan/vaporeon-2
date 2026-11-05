@@ -2,7 +2,10 @@ use std::{fs::remove_file, io::ErrorKind};
 
 use chrono::{Days, Local, NaiveDate};
 
-use super::files::{DataFile, FileSnapshot, Message};
+use super::{
+    files::{DataFile, FileSnapshot, Message},
+    history::History,
+};
 use crate::{
     action::{Action, OnActions, TextAction},
     components::{
@@ -30,6 +33,8 @@ pub struct Root {
     pub(super) snapshots: [FileSnapshot; 2],
     /// Messages for the user, waiting to be shown.
     pub(super) messages: Vec<Message>,
+    /// For undo and redo.
+    pub(super) history: History,
 }
 
 impl Root {
@@ -46,6 +51,7 @@ impl Root {
             right_panel: RightPanel::Nothing,
             snapshots: Default::default(),
             messages: vec![],
+            history: History::default(),
         }
     }
 
