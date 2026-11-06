@@ -74,6 +74,7 @@ pub fn css(theme: &Theme, metrics: &Metrics, zoom: f64) -> String {
     let header = css_color(theme.list_header);
     let header_dim = css_color(theme.list_header.dimmed());
     let decoration = css_color(theme.list_decoration);
+    let decoration_details = css_color(theme.list_decoration_details);
     let line = css_color(theme.list_left_line.dimmed());
     let caret = css_color(theme.caret);
     let selection = css_color(theme.list_header.with_alpha(0.35));
@@ -165,6 +166,11 @@ window.vaporeon textview.dim > text {{
 window.vaporeon .bullet {{
     color: {decoration};
     min-width: {bullet_width}px;
+}}
+
+/* Tasks with details (a description). */
+window.vaporeon .bullet.details {{
+    color: {decoration_details};
 }}
 
 window.vaporeon .project {{

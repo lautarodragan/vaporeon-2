@@ -44,7 +44,7 @@ use crate::{
         details_view::DetailsView,
         status_bar::{PromptOption, StatusBar},
         style::WINDOW_PADDING,
-        task_list_view::{DragAndDrop, OnEdit, OnTaskClick, TaskListView},
+        task_list_view::{Bullets, DragAndDrop, OnEdit, OnTaskClick, TaskListView},
     },
 };
 
@@ -385,15 +385,24 @@ impl Ui {
         let root = &app.root;
         let metrics = self.metrics.get();
         let focus = root.selected_panel();
+        let bullets = Bullets {
+            plain: app.theme.bullet.clone(),
+            with_details: app.theme.bullet_with_details.clone(),
+        };
 
-        self.day
-            .borrow_mut()
-            .update(root.task_list_day(), focus == Panel::Left, scroll, metrics.line_height);
+        self.day.borrow_mut().update(
+            root.task_list_day(),
+            focus == Panel::Left,
+            scroll,
+            metrics.line_height,
+            &bullets,
+        );
         self.global.borrow_mut().update(
             root.task_list_global(),
             focus == Panel::Right,
             scroll,
             metrics.line_height,
+            &bullets,
         );
         self.details
             .borrow_mut()

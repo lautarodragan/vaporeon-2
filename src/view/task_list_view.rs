@@ -64,8 +64,16 @@ impl Structure {
     }
 }
 
+/// The bullets before each task: one for tasks with details (a description), and one for the rest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Bullets {
+    pub plain: String,
+    pub with_details: String,
+}
+
 struct TaskRow {
     row: gtk::Box,
+    bullet: gtk::Label,
     label: gtk::Label,
     editor: Option<gtk::Text>,
 }
@@ -184,10 +192,33 @@ impl TaskRow {
             row,
             label,
             editor: None,
+            bullet,
         }
     }
 
-    fn update(&mut self, task: &EditableTask, selected: bool, on_edit: &OnEdit, syncing: &Rc<Cell<bool>>) {
+    fn update(
+        &mut self,
+        task: &EditableTask,
+        selected: bool,
+        bullets: &Bullets,
+        on_edit: &OnEdit,
+        syncing: &Rc<Cell<bool>>,
+    ) {
+        let has_details = !task.description().trim().is_empty();
+        let bullet = if has_details {
+            &bullets.with_details
+        } else {
+            &bullets.plain
+        };
+        if self.bullet.text() != bullet.as_str() {
+            self.bullet.set_text(bullet);
+        }
+        if has_details {
+            self.bullet.add_css_class("details");
+        } else {
+            self.bullet.remove_css_class("details");
+        }
+
         if task.is_editing() {
             if self.editor.is_none() {
                 let editor = gtk::Text::builder().hexpand(true).valign(gtk::Align::Center).build();
@@ -307,7 +338,7 @@ impl TaskListView {
     ///
     /// With `scroll`, if the selection moved, scrolls so the selected task is visible. This is used for keyboard
     /// navigation. Mouse clicks don't scroll (the clicked task is already visible).
-    pub fn update(&mut self, list: &TaskList, has_focus: bool, scroll: bool, row_height: f64) {
+    pub fn update(&mut self, list: &TaskList, has_focus: bool, scroll: bool, row_height: f64, bullets: &Bullets) {
         self.row_height.set(row_height);
 
         let structure = Structure::of(list);
@@ -327,7 +358,7 @@ impl TaskListView {
                         && s == list.selected_status_index()
                         && p == status.selected_project
                         && t == project.selected_task;
-                    row.update(task, selected, &self.on_edit, &self.syncing);
+                    row.update(task, selected, bullets, &self.on_edit, &self.syncing);
                 }
             }
         }

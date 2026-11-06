@@ -105,6 +105,9 @@ font = "Iosevka Term 14"
 
 Changes to this file are applied immediately, no need to restart.
 
+Tasks with details (a description) have a different bullet (`=` by default), so they can be told apart without
+opening the details panel. See `bullet`, `bullet_with_details` and `list_decoration_details`.
+
 Besides colors, the theme has `font` (any Pango font description), `line_height` and `window_decorations`
 (GTK title bar; off by default).
 

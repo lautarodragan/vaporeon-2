@@ -6,6 +6,8 @@
 list_header = "#d79921"
 list_entry = "#ebdbb2"
 list_decoration = "#975900"
+# The color of the bullet of tasks that have details (a description).
+list_decoration_details = "#975900"
 list_left_line = "#975900"
 caret = "#ebdbb2"
 
@@ -20,6 +22,12 @@ background_opacity = 0.75
 # Any Pango font description: "<family> [style] <size>".
 # For example "Iosevka Term 14", "JetBrains Mono Bold 12", or just "Monospace 13".
 font = "Monospace 13"
+
+# The bullet before each task, and the one for tasks with details (a description), so they can be told apart
+# without opening the details panel. They take the same space either way (it doesn't push the text).
+# Some ideas for bullet_with_details: "=", "≡", "·-", "-·", "+", or "-" with a different list_decoration_details.
+bullet = "-"
+bullet_with_details = "="
 
 # Row height, as a multiple of the font's line height.
 line_height = 1.3
