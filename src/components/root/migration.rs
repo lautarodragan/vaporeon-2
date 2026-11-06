@@ -34,11 +34,6 @@ impl Root {
             && self.settings.visible_projects().iter().any(|p| p.id == task.project_id)
     }
 
-    /// Whether a day was just loaded. Resets the flag.
-    pub fn take_day_loaded(&mut self) -> bool {
-        std::mem::take(&mut self.day_loaded)
-    }
-
     /// If the selected day is today, and it's empty, and the last day with tasks (looking back up to two weeks) has
     /// unfinished ones, offers to copy them. Unless the offer was turned down already.
     pub fn migration_offer(&self) -> Option<MigrationOffer> {

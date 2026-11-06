@@ -14,7 +14,6 @@ use crate::{
         task_list::TaskList,
         task_list_for_status::TaskListForStatus,
     },
-    git,
     models::Day,
     settings::Settings,
 };
@@ -31,13 +30,10 @@ pub struct Root {
     /// What we know about each file on disk. See [`DataFile`].
     pub(super) snapshots: [FileSnapshot; 2],
     /// Messages for the user, waiting to be shown.
-    pub(super) messages: Vec<Message>,
+    /// Things the UI should know about, waiting for it to take them. See [`Event`].
+    pub(super) events: Vec<Event>,
     /// For undo and redo.
     pub(super) history: History,
-    /// Whether a day was just loaded (see [`Root::take_day_loaded`]).
-    pub(super) day_loaded: bool,
-    /// Whether something was committed (see [`Root::take_committed`]).
-    pub(super) committed: bool,
     /// Days for which the user said no to copying the unfinished tasks of a previous day.
     pub(super) migration_declined: std::collections::HashSet<NaiveDate>,
 }
@@ -54,10 +50,8 @@ impl Root {
             project_filter: None,
             right_panel: RightPanel::Nothing,
             snapshots: Default::default(),
-            messages: vec![],
+            events: vec![],
             history: History::default(),
-            day_loaded: false,
-            committed: false,
             migration_declined: Default::default(),
         }
     }
@@ -82,7 +76,7 @@ impl Root {
         let path = self.file_path(DataFile::Day);
         self.task_list_day.load_file(path.as_path());
         self.take_snapshot(DataFile::Day);
-        self.day_loaded = true;
+        self.events.push(Event::DayLoaded);
     }
 
     pub fn load_from_template(&mut self) {
@@ -109,17 +103,16 @@ impl Root {
             DataFile::Global => self.write_global(),
         };
         self.take_snapshot(file);
+        if result == SaveResult::Saved {
+            self.events.push(Event::Saved);
+        }
         result
     }
 
-    /// Saves the global list and the selected day, if they have unsaved changes, and commits if anything was saved.
+    /// Saves the global list and the selected day, if they have unsaved changes.
     pub fn save_all(&mut self) -> SaveResult {
-        // Global first, then the day, and a single commit for both.
         let global = self.save_file(DataFile::Global);
         let day = self.save_file(DataFile::Day);
-        if global == SaveResult::Saved || day == SaveResult::Saved {
-            self.commit();
-        }
         global.and(day)
     }
 
@@ -156,21 +149,6 @@ impl Root {
         }
     }
 
-    /// Commits the changes in `storage_path`, if it's a git repository.
-    pub fn commit(&mut self) {
-        let git_started_at = std::time::Instant::now();
-        match git::commit_all(self.settings.storage_path.as_path()) {
-            Ok(committed) => self.committed |= committed,
-            Err(err) => log::debug!("Not committed: {err:?}"),
-        }
-        log::debug!("git took {} ms", git_started_at.elapsed().as_millis());
-    }
-
-    /// Whether something was committed since the last call (see [`Root::commit`]). Resets the flag.
-    pub fn take_committed(&mut self) -> bool {
-        std::mem::take(&mut self.committed)
-    }
-
     pub fn storage_path(&self) -> &std::path::Path {
         &self.settings.storage_path
     }
@@ -201,9 +179,7 @@ impl Root {
 
     /// Saves the current day, and loads another one.
     pub fn go_to_date(&mut self, date: NaiveDate) {
-        if self.save_file(DataFile::Day) == SaveResult::Saved {
-            self.commit();
-        }
+        self.save_file(DataFile::Day);
         self.selected_date = date;
         self.load_selected_day();
         self.on_selection_change();
@@ -459,6 +435,18 @@ impl Root {
         self.task_details
             .on_actions(vec![Action::Text(TextAction::EnterEditMode)]);
     }
+}
+
+/// Something the UI should know about. The model doesn't know about the UI: it leaves these for it to take (see
+/// [`Root::take_events`]) after handling whatever the user did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Event {
+    /// A message for the user.
+    Message(Message),
+    /// A day was loaded (or reloaded).
+    DayLoaded,
+    /// A file was written: it should be committed.
+    Saved,
 }
 
 /// What happened when saving.

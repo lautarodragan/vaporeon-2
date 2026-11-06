@@ -8,4 +8,4 @@ mod root;
 pub use files::{DataFile, ExternalChange, Resolution};
 pub use header::{HEADER_ROWS, HeaderLink};
 pub use migration::MigrationOffer;
-pub use root::{EditTarget, Panel, RightPanel, Root, SaveResult, TaskPosition};
+pub use root::{EditTarget, Event, Panel, RightPanel, Root, SaveResult, TaskPosition};

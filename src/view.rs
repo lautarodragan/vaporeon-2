@@ -29,6 +29,7 @@ use crate::{
     canvas::{Canvas, Metrics},
     components::root::{
         DataFile,
+        Event,
         ExternalChange,
         HEADER_ROWS,
         HeaderLink,
@@ -317,29 +318,39 @@ impl Ui {
         // Everything that changes the model ends up here, so this is where changes are recorded for undoing.
         app.borrow_mut().root.checkpoint();
 
-        // Push new commits to the git remote (a little later, so a burst of changes is pushed once).
-        let (committed, sync) = {
+        // What the model has to tell us.
+        let (events, sync) = {
             let mut app = app.borrow_mut();
-            (app.root.take_committed(), app.sync.clone())
+            (app.root.take_events(), app.sync.clone())
         };
-        if committed && let Some(sync) = sync {
-            sync.sync_soon();
+        let mut messages = vec![];
+        let mut day_loaded = false;
+        let mut saved = false;
+        for event in events {
+            match event {
+                Event::Message(message) => messages.push(message),
+                Event::DayLoaded => day_loaded = true,
+                Event::Saved => saved = true,
+            }
+        }
+
+        if saved && let Some(sync) = sync {
+            sync.commit();
         }
 
         // A day was loaded (or reloaded): maybe offer to copy the unfinished tasks of the previous one. Or stop
         // offering it, if it doesn't make sense anymore (e.g. the day was empty, but then tasks were pulled from the
         // git remote).
-        let offer = {
-            let mut app = app.borrow_mut();
-            app.root.take_day_loaded().then(|| app.root.migration_offer())
-        };
-        match offer {
-            Some(Some(offer)) => self.add_prompt(Prompt::Migration(offer)),
-            Some(None) => self.remove_migration_prompts(),
-            None => {}
+        if day_loaded {
+            let offer = app.borrow().root.migration_offer();
+            match offer {
+                Some(offer) => self.add_prompt(Prompt::Migration(offer)),
+                None => self.remove_migration_prompts(),
+            }
         }
 
-        for message in app.borrow_mut().root.take_messages() {
+        // After the questions: while one is shown, messages are only logged.
+        for message in messages {
             self.status_bar.show_message(&message.text, message.is_error);
         }
 

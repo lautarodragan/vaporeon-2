@@ -5,7 +5,7 @@ use std::{fs::read_to_string, path::PathBuf};
 
 use chrono::Local;
 
-use super::Root;
+use super::{Root, root::Event};
 use crate::action::{Action, OnActions, TextAction};
 
 /// One of the files the UI shows.
@@ -184,17 +184,17 @@ impl Root {
 
     pub fn info(&mut self, text: String) {
         log::info!("{text}");
-        self.messages.push(Message { text, is_error: false });
+        self.events.push(Event::Message(Message { text, is_error: false }));
     }
 
     pub fn error(&mut self, text: String) {
         log::error!("{text}");
-        self.messages.push(Message { text, is_error: true });
+        self.events.push(Event::Message(Message { text, is_error: true }));
     }
 
-    /// Messages for the user since the last call.
-    pub fn take_messages(&mut self) -> Vec<Message> {
-        std::mem::take(&mut self.messages)
+    /// Things the UI should know about, since the last call.
+    pub fn take_events(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.events)
     }
 }
 
@@ -291,7 +291,12 @@ mod tests {
         assert_eq!(root.check_external_change(DataFile::Day), ExternalChange::Reloaded);
         assert_eq!(day_titles(&root), ["a", "b"]);
         assert!(!root.is_dirty(DataFile::Day));
-        assert_eq!(root.take_messages().len(), 1);
+        let messages = root
+            .take_events()
+            .into_iter()
+            .filter(|event| matches!(event, Event::Message(_)))
+            .count();
+        assert_eq!(messages, 1);
         let _ = std::fs::remove_dir_all(dir);
     }
 

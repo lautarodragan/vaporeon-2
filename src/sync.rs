@@ -1,6 +1,8 @@
-//! Keeps `storage_path` in sync with its git remote, if it has one. See [`git::sync`].
+//! Runs git in the background: commits after saving, and keeps `storage_path` in sync with its git remote, if it has
+//! one (see [`git::sync`]).
 //!
-//! Git runs in a background thread, so the UI never waits for the network. Syncing happens:
+//! Git runs in GIO's thread pool, so the UI never waits for it (or for the network). Only one git command runs at a
+//! time: requests are queued (see [`Sync::run`]). Syncing happens:
 //! - when starting,
 //! - a minute after committing (so a burst of changes is pushed once),
 //! - every few minutes,
@@ -32,9 +34,11 @@ pub struct Sync {
     path: PathBuf,
     app: Weak<RefCell<crate::App>>,
     ui: Weak<Ui>,
+    /// Whether git is running (see [`Sync::run`]).
     running: Cell<bool>,
-    /// Asked to sync while a sync was running: sync again when it's done.
-    again: Cell<bool>,
+    /// Waiting to run.
+    commit_pending: Cell<bool>,
+    sync_pending: Cell<bool>,
     last_sync: Cell<Option<Instant>>,
     /// Last error reported, so the same one isn't reported again and again (e.g. while offline).
     last_error: RefCell<Option<String>>,
@@ -48,36 +52,64 @@ impl Sync {
             app: Rc::downgrade(app),
             ui: Rc::downgrade(ui),
             running: Cell::new(false),
-            again: Cell::new(false),
+            commit_pending: Cell::new(false),
+            sync_pending: Cell::new(false),
             last_sync: Cell::new(None),
             last_error: RefCell::new(None),
             push_timer: RefCell::new(None),
         })
     }
 
+    /// Commits in the background (if `storage_path` is a git repository), and syncs a little later.
+    pub fn commit(self: &Rc<Self>) {
+        self.commit_pending.set(true);
+        self.run();
+    }
+
     /// Syncs in the background.
     pub fn sync_now(self: &Rc<Self>) {
+        self.sync_pending.set(true);
+        self.run();
+    }
+
+    /// Runs what's pending, one thing at a time, until there's nothing left. Asking for something while running just
+    /// marks it as pending: the loop below picks it up.
+    fn run(self: &Rc<Self>) {
         if self.running.replace(true) {
-            self.again.set(true);
             return;
         }
 
         let this = self.clone();
-        let path = self.path.clone();
         glib::spawn_future_local(async move {
-            let started_at = Instant::now();
-            let result = gio::spawn_blocking(move || git::sync(&path))
-                .await
-                .unwrap_or_else(|_| Err("sync crashed".to_string()));
-            log::debug!("Synced in {} ms: {result:?}", started_at.elapsed().as_millis());
+            loop {
+                let path = this.path.clone();
+                let started_at = Instant::now();
 
-            this.running.set(false);
-            this.last_sync.set(Some(Instant::now()));
-            this.report(result);
-
-            if this.again.replace(false) {
-                this.sync_now();
+                // Syncing commits too, so there's no need to do both.
+                if this.sync_pending.take() {
+                    this.commit_pending.set(false);
+                    let result = gio::spawn_blocking(move || git::sync(&path))
+                        .await
+                        .unwrap_or_else(|_| Err("sync crashed".to_string()));
+                    log::debug!("Synced in {} ms: {result:?}", started_at.elapsed().as_millis());
+                    this.last_sync.set(Some(Instant::now()));
+                    this.report(result);
+                } else if this.commit_pending.take() {
+                    let result = gio::spawn_blocking(move || git::commit_all(&path)).await;
+                    log::debug!("Committed in {} ms: {result:?}", started_at.elapsed().as_millis());
+                    match result {
+                        // Push it, a little later.
+                        Ok(Ok(true)) => this.sync_soon(),
+                        Ok(Ok(false)) => {}
+                        // E.g. storage_path isn't a git repository, which is fine.
+                        Ok(Err(err)) => log::debug!("Not committed: {}", err.message()),
+                        Err(_) => log::error!("Committing crashed"),
+                    }
+                } else {
+                    break;
+                }
             }
+            this.running.set(false);
         });
     }
 

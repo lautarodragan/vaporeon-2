@@ -200,7 +200,6 @@ fn build_ui(application: &gtk::Application) {
             let mut app = app.borrow_mut();
             // Whatever is being edited is kept, as if confirmed.
             app.root.finish_editing();
-            let mut saved_something = false;
             for file in [DataFile::Global, DataFile::Day] {
                 if conflicts.contains(&file) {
                     // It changed on disk and the user didn't choose what to do yet: don't overwrite it.
@@ -208,16 +207,21 @@ fn build_ui(application: &gtk::Application) {
                     if let Err(err) = app.root.backup(file) {
                         log::error!("Couldn't save a backup of {file:?}: {err:?}");
                     }
-                } else if app.root.save_file(file) == SaveResult::Saved {
-                    saved_something = true;
+                } else {
+                    app.root.save_file(file);
                 }
             }
-            if saved_something {
-                app.root.commit();
-            }
             app.settings.save();
+            // The UI is going away: nobody's going to take care of these.
+            app.root.take_events();
 
-            // Push what's not pushed yet (and pull, so the push isn't rejected). The window is already hidden.
+            // Commit, and push what's not pushed yet (pulling first, so the push isn't rejected). Right here, not in
+            // the background: the app is about to quit. The window is already hidden.
+            // If git is busy in the background (e.g. a periodic sync), this may fail. Nothing's lost: whatever isn't
+            // committed or pushed will be next time.
+            if let Err(err) = git::commit_all(&storage_path) {
+                log::debug!("Not committed: {}", err.message());
+            }
             if let Err(err) = git::sync(&storage_path) {
                 log::warn!("Couldn't sync with the git remote: {err}");
             }
