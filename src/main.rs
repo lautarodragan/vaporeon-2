@@ -172,9 +172,13 @@ fn build_ui(application: &gtk::Application) {
     setup_input(&app, &ui);
     watch_theme_file(&app, &ui);
 
-    window.connect_close_request({
-        let app = app.clone();
-        let ui = ui.clone();
+    window.connect_close_request(glib::clone!(
+        #[weak]
+        app,
+        #[weak]
+        ui,
+        #[upgrade_or]
+        glib::Propagation::Proceed,
         move |window| {
             let closing_at = Instant::now();
 
@@ -228,24 +232,27 @@ fn build_ui(application: &gtk::Application) {
             log::debug!("Saved everything in {} ms. Closing.", ms_since(closing_at));
             glib::Propagation::Proceed
         }
-    });
+    ));
 
     // The week view highlights "today", so redraw it when the day changes.
-    glib::timeout_add_seconds_local(30, {
-        let ui = Rc::downgrade(&ui);
-        let mut today = Local::now().date_naive();
-        move || {
-            let Some(ui) = ui.upgrade() else {
-                return glib::ControlFlow::Break;
-            };
-            let now = Local::now().date_naive();
-            if now != today {
-                today = now;
-                ui.redraw_header();
+    let mut today = Local::now().date_naive();
+    glib::timeout_add_seconds_local(
+        30,
+        glib::clone!(
+            #[weak]
+            ui,
+            #[upgrade_or]
+            glib::ControlFlow::Break,
+            move || {
+                let now = Local::now().date_naive();
+                if now != today {
+                    today = now;
+                    ui.redraw_header();
+                }
+                glib::ControlFlow::Continue
             }
-            glib::ControlFlow::Continue
-        }
-    });
+        ),
+    );
 
     window.connect_realize(|_| startup_phase("Window realized"));
     window.connect_map(|_| startup_phase("Window mapped"));
@@ -264,27 +271,29 @@ fn build_ui(application: &gtk::Application) {
     startup_phase("Refreshed the UI");
 
     sync.sync_now();
-    glib::timeout_add_local(sync::PERIOD, {
-        let sync = Rc::downgrade(&sync);
-        move || match sync.upgrade() {
-            Some(sync) => {
+    glib::timeout_add_local(
+        sync::PERIOD,
+        glib::clone!(
+            #[weak]
+            sync,
+            #[upgrade_or]
+            glib::ControlFlow::Break,
+            move || {
                 sync.sync_now();
                 glib::ControlFlow::Continue
             }
-            None => glib::ControlFlow::Break,
-        }
-    });
+        ),
+    );
     // E.g. coming back to the computer after adding tasks from the phone.
-    window.connect_is_active_notify({
-        let sync = Rc::downgrade(&sync);
+    window.connect_is_active_notify(glib::clone!(
+        #[weak]
+        sync,
         move |window| {
-            if window.is_active()
-                && let Some(sync) = sync.upgrade()
-            {
+            if window.is_active() {
                 sync.sync_if_stale();
             }
         }
-    });
+    ));
 }
 
 /// Whether `action` ends editing `target`.
@@ -330,9 +339,13 @@ fn setup_input(app: &AppRef, ui: &Rc<Ui>) {
     let scroll_controller = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
     scroll_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
     let scrolled = Rc::new(Cell::new(0.0));
-    scroll_controller.connect_scroll({
-        let app = app.clone();
-        let ui = Rc::downgrade(ui);
+    scroll_controller.connect_scroll(glib::clone!(
+        #[weak]
+        app,
+        #[weak]
+        ui,
+        #[upgrade_or]
+        glib::Propagation::Proceed,
         move |controller, _, dy| {
             if !controller
                 .current_event_state()
@@ -340,9 +353,6 @@ fn setup_input(app: &AppRef, ui: &Rc<Ui>) {
             {
                 return glib::Propagation::Proceed;
             }
-            let Some(ui) = ui.upgrade() else {
-                return glib::Propagation::Proceed;
-            };
             if ui.is_prompt_active() {
                 return glib::Propagation::Stop;
             }
@@ -355,7 +365,7 @@ fn setup_input(app: &AppRef, ui: &Rc<Ui>) {
             }
             glib::Propagation::Stop
         }
-    });
+    ));
     ui.window.add_controller(scroll_controller);
 
     let key_controller = gtk::EventControllerKey::new();
@@ -365,9 +375,11 @@ fn setup_input(app: &AppRef, ui: &Rc<Ui>) {
 
     // This handler holds the only strong reference to `ui` (everything else holds weak ones),
     // so the UI lives as long as the window does.
-    key_controller.connect_key_pressed({
-        let app = app.clone();
-        let ui = ui.clone();
+    key_controller.connect_key_pressed(glib::clone!(
+        #[strong]
+        app,
+        #[strong]
+        ui,
         move |_, key, _keycode, state| {
             let Some(event) = KeyEvent::from_gdk(key, state) else {
                 return glib::Propagation::Proceed;
@@ -476,7 +488,7 @@ fn setup_input(app: &AppRef, ui: &Rc<Ui>) {
 
             glib::Propagation::Stop
         }
-    });
+    ));
 
     ui.window.add_controller(key_controller);
 }
@@ -488,32 +500,33 @@ fn paste(app: &AppRef, ui: &Rc<Ui>) {
         return;
     };
     let clipboard = display.clipboard();
-    let app = app.clone();
-    let ui = Rc::downgrade(ui);
 
-    glib::spawn_future_local(async move {
-        let text = match clipboard.read_text_future().await {
-            Ok(Some(text)) => text.to_string(),
-            Ok(None) => {
-                log::debug!("Clipboard is empty or doesn't contain text");
-                return;
-            }
-            Err(err) => {
-                log::debug!("Clipboard error (but should be fine): {err:?}");
-                return;
-            }
-        };
+    glib::spawn_future_local(glib::clone!(
+        #[weak]
+        app,
+        #[weak]
+        ui,
+        async move {
+            let text = match clipboard.read_text_future().await {
+                Ok(Some(text)) => text.to_string(),
+                Ok(None) => {
+                    log::debug!("Clipboard is empty or doesn't contain text");
+                    return;
+                }
+                Err(err) => {
+                    log::debug!("Clipboard error (but should be fine): {err:?}");
+                    return;
+                }
+            };
 
-        log::debug!("Pasted: {text}");
+            log::debug!("Pasted: {text}");
 
-        app.borrow_mut()
-            .root
-            .on_actions(vec![Action::Application(ApplicationAction::PasteText(text))]);
-
-        if let Some(ui) = ui.upgrade() {
+            app.borrow_mut()
+                .root
+                .on_actions(vec![Action::Application(ApplicationAction::PasteText(text))]);
             ui.refresh(&app, true);
         }
-    });
+    ));
 }
 
 /// Reloads the theme whenever `~/.config/vaporeon/theme.toml` changes, so it's easy to tweak colors, fonts
@@ -531,9 +544,11 @@ fn watch_theme_file(app: &AppRef, ui: &Rc<Ui>) {
         }
     };
 
-    monitor.connect_changed({
-        let app = app.clone();
-        let ui = Rc::downgrade(ui);
+    monitor.connect_changed(glib::clone!(
+        #[weak]
+        app,
+        #[weak]
+        ui,
         move |_, _, _, event| {
             if !matches!(
                 event,
@@ -550,12 +565,10 @@ fn watch_theme_file(app: &AppRef, ui: &Rc<Ui>) {
                 app.theme = theme.zoomed(app.zoom);
                 app.base_theme = theme;
             }
-            if let Some(ui) = ui.upgrade() {
-                ui.apply_theme(&app.borrow().theme, app.borrow().zoom);
-                ui.refresh(&app, false);
-            }
+            ui.apply_theme(&app.borrow().theme, app.borrow().zoom);
+            ui.refresh(&app, false);
         }
-    });
+    ));
 
     app.borrow_mut().theme_file_monitor = Some(monitor);
 }

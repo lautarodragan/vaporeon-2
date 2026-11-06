@@ -71,16 +71,19 @@ impl StatusBar {
         self.widget.set_visible(true);
 
         let duration = if is_error { ERROR_DURATION } else { MESSAGE_DURATION };
-        let id = glib::timeout_add_local_once(duration, {
-            let widget = self.widget.downgrade();
-            let hide_timer = self.hide_timer.clone();
-            move || {
-                hide_timer.borrow_mut().take();
-                if let Some(widget) = widget.upgrade() {
+        let id = glib::timeout_add_local_once(
+            duration,
+            glib::clone!(
+                #[weak(rename_to = widget)]
+                self.widget,
+                #[strong(rename_to = hide_timer)]
+                self.hide_timer,
+                move || {
+                    hide_timer.borrow_mut().take();
                     widget.set_visible(false);
                 }
-            }
-        });
+            ),
+        );
         *self.hide_timer.borrow_mut() = Some(id);
     }
 
@@ -104,13 +107,14 @@ impl StatusBar {
             option.append(&description_label);
 
             let click = gtk::GestureClick::new();
-            click.connect_pressed({
-                let on_click = on_click.clone();
+            click.connect_pressed(glib::clone!(
+                #[strong]
+                on_click,
                 move |gesture, _, _, _| {
                     gesture.set_state(gtk::EventSequenceState::Claimed);
                     on_click(key);
                 }
-            });
+            ));
             option.add_controller(click);
             option.set_cursor_from_name(Some("pointer"));
 

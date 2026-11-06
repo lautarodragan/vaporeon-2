@@ -79,38 +79,42 @@ impl Sync {
             return;
         }
 
-        let this = self.clone();
-        glib::spawn_future_local(async move {
-            loop {
-                let path = this.path.clone();
-                let started_at = Instant::now();
+        // A strong reference: once started, it runs until there's nothing pending.
+        glib::spawn_future_local(glib::clone!(
+            #[strong(rename_to = this)]
+            self,
+            async move {
+                loop {
+                    let path = this.path.clone();
+                    let started_at = Instant::now();
 
-                // Syncing commits too, so there's no need to do both.
-                if this.sync_pending.take() {
-                    this.commit_pending.set(false);
-                    let result = gio::spawn_blocking(move || git::sync(&path))
-                        .await
-                        .unwrap_or_else(|_| Err("sync crashed".to_string()));
-                    log::debug!("Synced in {} ms: {result:?}", started_at.elapsed().as_millis());
-                    this.last_sync.set(Some(Instant::now()));
-                    this.report(result);
-                } else if this.commit_pending.take() {
-                    let result = gio::spawn_blocking(move || git::commit_all(&path)).await;
-                    log::debug!("Committed in {} ms: {result:?}", started_at.elapsed().as_millis());
-                    match result {
-                        // Push it, a little later.
-                        Ok(Ok(true)) => this.sync_soon(),
-                        Ok(Ok(false)) => {}
-                        // E.g. storage_path isn't a git repository, which is fine.
-                        Ok(Err(err)) => log::debug!("Not committed: {}", err.message()),
-                        Err(_) => log::error!("Committing crashed"),
+                    // Syncing commits too, so there's no need to do both.
+                    if this.sync_pending.take() {
+                        this.commit_pending.set(false);
+                        let result = gio::spawn_blocking(move || git::sync(&path))
+                            .await
+                            .unwrap_or_else(|_| Err("sync crashed".to_string()));
+                        log::debug!("Synced in {} ms: {result:?}", started_at.elapsed().as_millis());
+                        this.last_sync.set(Some(Instant::now()));
+                        this.report(result);
+                    } else if this.commit_pending.take() {
+                        let result = gio::spawn_blocking(move || git::commit_all(&path)).await;
+                        log::debug!("Committed in {} ms: {result:?}", started_at.elapsed().as_millis());
+                        match result {
+                            // Push it, a little later.
+                            Ok(Ok(true)) => this.sync_soon(),
+                            Ok(Ok(false)) => {}
+                            // E.g. storage_path isn't a git repository, which is fine.
+                            Ok(Err(err)) => log::debug!("Not committed: {}", err.message()),
+                            Err(_) => log::error!("Committing crashed"),
+                        }
+                    } else {
+                        break;
                     }
-                } else {
-                    break;
                 }
+                this.running.set(false);
             }
-            this.running.set(false);
-        });
+        ));
     }
 
     /// Syncs a little later. Used after committing, so a burst of changes results in a single push.
@@ -118,13 +122,17 @@ impl Sync {
         if self.push_timer.borrow().is_some() {
             return;
         }
-        let this = Rc::downgrade(self);
-        let id = glib::timeout_add_local_once(PUSH_DELAY, move || {
-            if let Some(this) = this.upgrade() {
-                this.push_timer.borrow_mut().take();
-                this.sync_now();
-            }
-        });
+        let id = glib::timeout_add_local_once(
+            PUSH_DELAY,
+            glib::clone!(
+                #[weak(rename_to = this)]
+                self,
+                move || {
+                    this.push_timer.borrow_mut().take();
+                    this.sync_now();
+                }
+            ),
+        );
         *self.push_timer.borrow_mut() = Some(id);
     }
 

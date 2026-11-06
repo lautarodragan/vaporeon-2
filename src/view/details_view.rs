@@ -5,7 +5,7 @@
 
 use std::{cell::Cell, rc::Rc};
 
-use gtk::prelude::*;
+use gtk::{glib, prelude::*};
 
 use crate::{canvas::Metrics, components::task_details::TaskDetails, view::task_list_view::OnEdit};
 
@@ -55,27 +55,29 @@ impl DetailsView {
 
         let is_editing = Rc::new(Cell::new(false));
 
-        text_view.buffer().connect_changed({
-            let syncing = syncing.clone();
+        text_view.buffer().connect_changed(glib::clone!(
+            #[strong]
+            syncing,
             move |buffer| {
                 if !syncing.get() {
                     on_edit(buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string());
                 }
             }
-        });
+        ));
 
         // Capture phase, so we see the click before the text view does.
         let click = gtk::GestureClick::new();
         click.set_propagation_phase(gtk::PropagationPhase::Capture);
-        click.connect_pressed({
-            let is_editing = is_editing.clone();
+        click.connect_pressed(glib::clone!(
+            #[strong]
+            is_editing,
             move |gesture, _, _, _| {
                 if !is_editing.get() {
                     gesture.set_state(gtk::EventSequenceState::Claimed);
                     on_click();
                 }
             }
-        });
+        ));
         text_view.add_controller(click);
 
         Self {

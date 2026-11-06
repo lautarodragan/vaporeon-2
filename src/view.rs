@@ -104,43 +104,57 @@ impl Ui {
             // so the editors' "changed" handlers can ignore it.
             let syncing = Rc::new(Cell::new(false));
 
-            let on_edit: OnEdit = {
-                let app = app.clone();
-                let ui = ui.clone();
-                Rc::new(move |text| {
+            // `ui` is a Weak (the Ui doesn't exist yet), so closures keep a copy of it (`#[strong]` clones the Weak)
+            // and schedule_refresh upgrades it.
+            let on_edit: OnEdit = Rc::new(glib::clone!(
+                #[weak]
+                app,
+                #[strong]
+                ui,
+                move |text| {
                     app.borrow_mut().root.set_editing_text(text);
                     schedule_refresh(&ui, &app, false);
-                })
-            };
+                }
+            ));
 
             let on_task_click = |panel: Panel| -> OnTaskClick {
-                let app = app.clone();
-                let ui = ui.clone();
-                Rc::new(move |status, project, task, n_press| {
-                    app.borrow_mut()
-                        .root
-                        .click_task(panel, status, project, task, n_press >= 2);
-                    schedule_refresh(&ui, &app, false);
-                })
+                Rc::new(glib::clone!(
+                    #[weak]
+                    app,
+                    #[strong]
+                    ui,
+                    move |status, project, task, n_press| {
+                        app.borrow_mut()
+                            .root
+                            .click_task(panel, status, project, task, n_press >= 2);
+                        schedule_refresh(&ui, &app, false);
+                    }
+                ))
             };
 
-            let on_details_click: Rc<dyn Fn()> = {
-                let app = app.clone();
-                let ui = ui.clone();
-                Rc::new(move || {
+            let on_details_click: Rc<dyn Fn()> = Rc::new(glib::clone!(
+                #[weak]
+                app,
+                #[strong]
+                ui,
+                move || {
                     app.borrow_mut().root.click_details();
                     schedule_refresh(&ui, &app, false);
-                })
-            };
+                }
+            ));
 
             // The task being dragged, if the drag started in this app.
             let dragged: Rc<Cell<Option<TaskPosition>>> = Rc::new(Cell::new(None));
 
             let drag_and_drop = |panel: Panel| DragAndDrop {
-                prepare: {
-                    let app = app.clone();
-                    let dragged = dragged.clone();
-                    Rc::new(move |status, project, task| {
+                prepare: Rc::new(glib::clone!(
+                    #[weak]
+                    app,
+                    #[strong]
+                    dragged,
+                    #[upgrade_or]
+                    None,
+                    move |status, project, task| {
                         let app = app.borrow();
                         if app.root.editing().is_some() {
                             return None;
@@ -164,13 +178,18 @@ impl Ui {
                             task,
                         }));
                         Some(title)
-                    })
-                },
-                drop: {
-                    let app = app.clone();
-                    let ui = ui.clone();
-                    let dragged = dragged.clone();
-                    Rc::new(move |status, project, task, text| {
+                    }
+                )),
+                drop: Rc::new(glib::clone!(
+                    #[weak]
+                    app,
+                    #[strong]
+                    ui,
+                    #[strong]
+                    dragged,
+                    #[upgrade_or]
+                    false,
+                    move |status, project, task, text| {
                         let to = TaskPosition {
                             panel,
                             status,
@@ -184,23 +203,25 @@ impl Ui {
                         // Not right away: the dragged row may be removed when refreshing.
                         schedule_refresh(&ui, &app, false);
                         dropped
-                    })
-                },
-                end: {
-                    let dragged = dragged.clone();
-                    Rc::new(move || dragged.set(None))
-                },
-                is_noop: {
-                    let dragged = dragged.clone();
-                    Rc::new(move |status, project, position| {
+                    }
+                )),
+                end: Rc::new(glib::clone!(
+                    #[strong]
+                    dragged,
+                    move || dragged.set(None)
+                )),
+                is_noop: Rc::new(glib::clone!(
+                    #[strong]
+                    dragged,
+                    move |status, project, position| {
                         dragged.get().is_some_and(|from| {
                             from.panel == panel
                                 && from.status == status
                                 && from.project == project
                                 && (position == from.task || position == from.task + 1)
                         })
-                    })
-                },
+                    }
+                )),
             };
 
             let day = TaskListView::new(
@@ -237,22 +258,26 @@ impl Ui {
             let header = gtk::DrawingArea::builder().hexpand(true).focusable(true).build();
             // Clickable parts of the header, as of the last time it was drawn.
             let links: Rc<RefCell<Vec<HeaderLink>>> = Rc::new(RefCell::new(vec![]));
-            header.set_draw_func({
-                let app = app.clone();
-                let links = links.clone();
+            header.set_draw_func(glib::clone!(
+                #[weak]
+                app,
+                #[strong]
+                links,
                 move |area, cr, width, _height| {
                     let app = app.borrow();
                     let canvas = Canvas::new(cr, &area.pango_context(), &app.theme, width as f64);
                     *links.borrow_mut() = app.root.render_header(&canvas);
                 }
-            });
+            ));
             add_header_links(&header, links, app, ui);
             // Whether there's room for both panels depends on the width.
-            header.connect_resize({
-                let app = app.clone();
-                let ui = ui.clone();
+            header.connect_resize(glib::clone!(
+                #[weak]
+                app,
+                #[strong]
+                ui,
                 move |_, _, _| schedule_refresh(&ui, &app, false)
-            });
+            ));
 
             let main_box = gtk::Box::builder().orientation(gtk::Orientation::Vertical).build();
             // Its margins are set in CSS, so they scale with the zoom.
@@ -519,8 +544,10 @@ impl Ui {
                         continue;
                     }
                 };
-            monitor.connect_changed({
-                let ui = self.this.clone();
+            let Some(this) = self.this.upgrade() else { return };
+            monitor.connect_changed(glib::clone!(
+                #[weak]
+                this,
                 move |_, _, _, event| {
                     if matches!(
                         event,
@@ -528,12 +555,11 @@ impl Ui {
                             | gio::FileMonitorEvent::Changed
                             | gio::FileMonitorEvent::Created
                             | gio::FileMonitorEvent::Deleted
-                    ) && let Some(ui) = ui.upgrade()
-                    {
-                        ui.schedule_file_check(file);
+                    ) {
+                        this.schedule_file_check(file);
                     }
                 }
-            });
+            ));
             self.file_monitors.borrow_mut().insert(file, (path, monitor));
         }
     }
@@ -544,12 +570,18 @@ impl Ui {
         }
         self.file_checks_scheduled.borrow_mut().push(file);
 
-        let ui = self.this.clone();
-        glib::timeout_add_local_once(FILE_CHANGE_DELAY, move || {
-            let Some(ui) = ui.upgrade() else { return };
-            ui.file_checks_scheduled.borrow_mut().retain(|f| *f != file);
-            ui.check_file(file);
-        });
+        let Some(this) = self.this.upgrade() else { return };
+        glib::timeout_add_local_once(
+            FILE_CHANGE_DELAY,
+            glib::clone!(
+                #[weak]
+                this,
+                move || {
+                    this.file_checks_scheduled.borrow_mut().retain(|f| *f != file);
+                    this.check_file(file);
+                }
+            ),
+        );
     }
 
     /// Checks whether a file changed on disk. If so: reloads it if there are no unsaved changes, asks otherwise.
@@ -599,17 +631,20 @@ impl Ui {
         };
 
         // Clicking an option removes the options, so answer once GTK is done handling the click.
-        let on_click: Rc<dyn Fn(char)> = {
-            let ui = self.this.clone();
-            Rc::new(move |key| {
-                let ui = ui.clone();
-                glib::idle_add_local_once(move || {
-                    if let Some(ui) = ui.upgrade() {
-                        ui.answer_prompt(key);
+        let Some(this) = self.this.upgrade() else { return };
+        let on_click: Rc<dyn Fn(char)> = Rc::new(glib::clone!(
+            #[weak]
+            this,
+            move |key| {
+                glib::idle_add_local_once(glib::clone!(
+                    #[weak]
+                    this,
+                    move || {
+                        this.answer_prompt(key);
                     }
-                });
-            })
-        };
+                ));
+            }
+        ));
 
         self.status_bar.show_prompt(&text, options, on_click);
         // Nothing else responds to the mouse until the question is answered.
@@ -635,31 +670,36 @@ fn schedule_refresh(ui: &Weak<Ui>, app: &AppRef, scroll: bool) {
     if ui.refresh_scheduled.replace(true) {
         return;
     }
-    let app = app.clone();
-    glib::idle_add_local_once(move || {
-        ui.refresh_scheduled.set(false);
-        ui.refresh(&app, ui.refresh_scroll.replace(false));
-    });
+    glib::idle_add_local_once(glib::clone!(
+        #[weak]
+        app,
+        #[weak]
+        ui,
+        move || {
+            ui.refresh_scheduled.set(false);
+            ui.refresh(&app, ui.refresh_scroll.replace(false));
+        }
+    ));
 }
 
 /// Clicking a day in the header goes to that day. The pointer becomes a hand over them.
 fn add_header_links(header: &gtk::DrawingArea, links: Rc<RefCell<Vec<HeaderLink>>>, app: &AppRef, ui: &Weak<Ui>) {
-    let link_at = {
-        let links = links.clone();
-        move |x: f64| {
-            links
-                .borrow()
-                .iter()
-                .find(|link| x >= link.x.0 && x < link.x.1)
-                .copied()
-        }
+    let link_at = move |x: f64| {
+        links
+            .borrow()
+            .iter()
+            .find(|link| x >= link.x.0 && x < link.x.1)
+            .copied()
     };
 
     let click = gtk::GestureClick::new();
-    click.connect_pressed({
-        let app = app.clone();
-        let ui = ui.clone();
-        let link_at = link_at.clone();
+    click.connect_pressed(glib::clone!(
+        #[weak]
+        app,
+        #[strong]
+        ui,
+        #[strong]
+        link_at,
         move |_, _, x, _| {
             let Some(link) = link_at(x) else { return };
             {
@@ -671,26 +711,28 @@ fn add_header_links(header: &gtk::DrawingArea, links: Rc<RefCell<Vec<HeaderLink>
             }
             schedule_refresh(&ui, &app, true);
         }
-    });
+    ));
     header.add_controller(click);
 
     let motion = gtk::EventControllerMotion::new();
-    motion.connect_motion({
-        let header = header.downgrade();
+    motion.connect_motion(glib::clone!(
+        #[weak]
+        header,
         move |_, x, _| {
-            let Some(header) = header.upgrade() else { return };
             let cursor = link_at(x).map(|_| "pointer");
             header.set_cursor_from_name(cursor);
         }
-    });
+    ));
     header.add_controller(motion);
 }
 
 fn add_panel_click(widget: &impl IsA<gtk::Widget>, panel: Panel, app: &AppRef, ui: &Weak<Ui>) {
     let click = gtk::GestureClick::new();
-    click.connect_pressed({
-        let app = app.clone();
-        let ui = ui.clone();
+    click.connect_pressed(glib::clone!(
+        #[weak]
+        app,
+        #[strong]
+        ui,
         move |_, _, _, _| {
             {
                 let mut app = app.borrow_mut();
@@ -699,6 +741,6 @@ fn add_panel_click(widget: &impl IsA<gtk::Widget>, panel: Panel, app: &AppRef, u
             }
             schedule_refresh(&ui, &app, false);
         }
-    });
+    ));
     widget.add_controller(click);
 }

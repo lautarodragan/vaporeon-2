@@ -101,46 +101,52 @@ impl TaskRow {
         // Dragging this task.
         let drag = gtk::DragSource::builder().actions(gdk::DragAction::MOVE).build();
         let hotspot = Rc::new(Cell::new((0, 0)));
-        drag.connect_prepare({
-            let prepare = dnd.prepare.clone();
-            let hotspot = hotspot.clone();
+        drag.connect_prepare(glib::clone!(
+            #[strong(rename_to = prepare)]
+            dnd.prepare,
+            #[strong]
+            hotspot,
             move |_, x, y| {
                 let text = prepare(status, project, task)?;
                 hotspot.set((x as i32, y as i32));
                 Some(gdk::ContentProvider::for_value(&text.to_value()))
             }
-        });
-        drag.connect_drag_begin({
-            let row = row.downgrade();
+        ));
+        drag.connect_drag_begin(glib::clone!(
+            #[weak]
+            row,
             move |drag, _| {
                 // The row itself is what's shown under the pointer while dragging. A snapshot of it, not the live
                 // widget: otherwise, when dragging over the row itself, the drop indicator would show up on the
                 // icon too.
                 let (x, y) = hotspot.get();
-                let snapshot = gtk::WidgetPaintable::new(row.upgrade().as_ref()).current_image();
+                let snapshot = gtk::WidgetPaintable::new(Some(&row)).current_image();
                 drag.set_icon(Some(&snapshot), x, y);
             }
-        });
-        drag.connect_drag_end({
-            let end = dnd.end.clone();
+        ));
+        drag.connect_drag_end(glib::clone!(
+            #[strong(rename_to = end)]
+            dnd.end,
             move |_, _, _| end()
-        });
+        ));
         row.add_controller(drag.clone());
         // Both gestures work on the same clicks: the click selects the task, then dragging moves it.
         click.group_with(&drag);
 
         // Dropping on this task: above it if dropped on its top half, below it otherwise.
         let target = gtk::DropTarget::new(glib::Type::STRING, gdk::DragAction::MOVE | gdk::DragAction::COPY);
-        target.connect_motion({
-            let row = row.downgrade();
-            let is_noop = dnd.is_noop.clone();
+        target.connect_motion(glib::clone!(
+            #[weak]
+            row,
+            #[strong(rename_to = is_noop)]
+            dnd.is_noop,
+            #[upgrade_or]
+            gdk::DragAction::empty(),
             move |target, _, y| {
-                if let Some(row) = row.upgrade() {
-                    let above = y < row.height() as f64 / 2.0;
-                    let position = if above { task } else { task + 1 };
-                    let indicator = (!is_noop(status, project, position)).then_some(above);
-                    show_drop_indicator(&row, indicator);
-                }
+                let above = y < row.height() as f64 / 2.0;
+                let position = if above { task } else { task + 1 };
+                let indicator = (!is_noop(status, project, position)).then_some(above);
+                show_drop_indicator(&row, indicator);
                 // Tasks dragged within the app are moved. Text from other apps is copied.
                 let actions = target
                     .current_drop()
@@ -152,26 +158,26 @@ impl TaskRow {
                     gdk::DragAction::COPY
                 }
             }
-        });
-        target.connect_leave({
-            let row = row.downgrade();
-            move |_| {
-                if let Some(row) = row.upgrade() {
-                    show_drop_indicator(&row, None);
-                }
-            }
-        });
-        target.connect_drop({
-            let row = row.downgrade();
-            let drop = dnd.drop.clone();
+        ));
+        target.connect_leave(glib::clone!(
+            #[weak]
+            row,
+            move |_| show_drop_indicator(&row, None)
+        ));
+        target.connect_drop(glib::clone!(
+            #[weak]
+            row,
+            #[strong(rename_to = drop)]
+            dnd.drop,
+            #[upgrade_or]
+            false,
             move |_, value, _, y| {
-                let Some(row) = row.upgrade() else { return false };
                 show_drop_indicator(&row, None);
                 let Ok(text) = value.get::<String>() else { return false };
                 let before = y < row.height() as f64 / 2.0;
                 drop(status, project, if before { task } else { task + 1 }, text)
             }
-        });
+        ));
         row.add_controller(target);
 
         Self {
@@ -191,15 +197,17 @@ impl TaskRow {
                 editor.set_text(task.title());
                 syncing.set(false);
 
-                editor.connect_changed({
-                    let on_edit = on_edit.clone();
-                    let syncing = syncing.clone();
+                editor.connect_changed(glib::clone!(
+                    #[strong]
+                    on_edit,
+                    #[strong]
+                    syncing,
                     move |editor| {
                         if !syncing.get() {
                             on_edit(editor.text().to_string());
                         }
                     }
-                });
+                ));
 
                 self.row.remove(&self.label);
                 self.row.append(&editor);
@@ -264,9 +272,11 @@ impl TaskListView {
         let pending_scroll: Rc<Cell<Option<(f64, f64)>>> = Rc::new(Cell::new(None));
         let row_height = Rc::new(Cell::new(1.0));
 
-        scrolled.vadjustment().connect_changed({
-            let pending_scroll = pending_scroll.clone();
-            let row_height = row_height.clone();
+        scrolled.vadjustment().connect_changed(glib::clone!(
+            #[strong]
+            pending_scroll,
+            #[strong]
+            row_height,
             move |adjustment| {
                 if let Some((top, bottom)) = pending_scroll.get()
                     && scroll_into_view(adjustment, top, bottom, row_height.get())
@@ -274,7 +284,7 @@ impl TaskListView {
                     pending_scroll.set(None);
                 }
             }
-        });
+        ));
 
         setup_drag_autoscroll(&scrolled, row_height.clone());
 
@@ -423,25 +433,26 @@ fn setup_drag_autoscroll(scrolled: &gtk::ScrolledWindow, row_height: Rc<Cell<f64
     let speed = Rc::new(Cell::new(0.0));
     let timer: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
 
-    let stop = {
-        let speed = speed.clone();
-        let timer = timer.clone();
+    let stop = glib::clone!(
+        #[strong]
+        speed,
+        #[strong]
+        timer,
         move || {
             speed.set(0.0);
             if let Some(timer) = timer.borrow_mut().take() {
                 timer.remove();
             }
         }
-    };
+    );
 
     let motion = gtk::DropControllerMotion::new();
-    motion.connect_motion({
-        let scrolled = scrolled.downgrade();
-        let speed = speed.clone();
-        let timer = timer.clone();
-        let stop = stop.clone();
+    motion.connect_motion(glib::clone!(
+        #[weak]
+        scrolled,
+        #[strong]
+        stop,
         move |_, _, y| {
-            let Some(scrolled) = scrolled.upgrade() else { return };
             let height = scrolled.height() as f64;
             // Within 2 rows of an edge, scroll. The closer to the edge, the faster.
             let edge = (row_height.get() * 2.0).min(height / 4.0);
@@ -463,23 +474,30 @@ fn setup_drag_autoscroll(scrolled: &gtk::ScrolledWindow, row_height: Rc<Cell<f64
             if timer.borrow().is_some() {
                 return;
             }
-            let id = glib::timeout_add_local(std::time::Duration::from_millis(16), {
-                let scrolled = scrolled.downgrade();
-                let speed = speed.clone();
-                let timer = timer.clone();
-                move || {
-                    let Some(scrolled) = scrolled.upgrade() else {
+            let id = glib::timeout_add_local(
+                std::time::Duration::from_millis(16),
+                glib::clone!(
+                    #[weak]
+                    scrolled,
+                    #[strong]
+                    speed,
+                    #[strong]
+                    timer,
+                    #[upgrade_or_else]
+                    || {
                         timer.borrow_mut().take();
-                        return glib::ControlFlow::Break;
-                    };
-                    let adjustment = scrolled.vadjustment();
-                    adjustment.set_value(adjustment.value() + speed.get());
-                    glib::ControlFlow::Continue
-                }
-            });
+                        glib::ControlFlow::Break
+                    },
+                    move || {
+                        let adjustment = scrolled.vadjustment();
+                        adjustment.set_value(adjustment.value() + speed.get());
+                        glib::ControlFlow::Continue
+                    }
+                ),
+            );
             *timer.borrow_mut() = Some(id);
         }
-    });
+    ));
     motion.connect_leave(move |_| stop());
     scrolled.add_controller(motion);
 }
