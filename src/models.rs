@@ -63,56 +63,6 @@ impl Day {
         write(path, serialized)?;
         Ok(())
     }
-
-    pub fn example() -> Self {
-        Day {
-            date_time: Local::now().date_naive(),
-            tasks: vec![
-                Task {
-                    text: "do the dishes".to_string(),
-                    project_id: 0,
-                    status: TaskStatus::ToDo,
-                    details: None,
-                },
-                Task {
-                    text: "pay taxes".to_string(),
-                    project_id: 0,
-                    status: TaskStatus::Done,
-                    details: None,
-                },
-                Task {
-                    text: "meditate".to_string(),
-                    project_id: 0,
-                    status: TaskStatus::ToDo,
-                    details: None,
-                },
-                Task {
-                    text: "write tests".to_string(),
-                    project_id: 1,
-                    status: TaskStatus::ToDo,
-                    details: None,
-                },
-                Task {
-                    text: "implement that new feature".to_string(),
-                    project_id: 1,
-                    status: TaskStatus::Doing,
-                    details: None,
-                },
-                Task {
-                    text: "add another synth solo".to_string(),
-                    project_id: 2,
-                    status: TaskStatus::ToDo,
-                    details: None,
-                },
-                Task {
-                    text: "add more cowbell to the song".to_string(),
-                    project_id: 2,
-                    status: TaskStatus::Done,
-                    details: None,
-                },
-            ],
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

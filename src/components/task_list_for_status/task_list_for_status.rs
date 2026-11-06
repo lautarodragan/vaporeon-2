@@ -6,7 +6,6 @@ use crate::{
 pub struct TaskListForStatus {
     pub status: TaskStatus,
     pub tasks_by_project: Vec<TaskListForProject>,
-    pub projects: Vec<Project>,
     pub selected_project: usize,
     pub project_filter: Option<usize>,
 }
@@ -43,7 +42,6 @@ impl TaskListForStatus {
                     })
                     .collect(),
                 status: task_status,
-                projects: projects.clone(),
                 selected_project: 0,
                 project_filter: None,
             })

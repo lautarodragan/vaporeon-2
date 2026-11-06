@@ -7,7 +7,6 @@ use chrono::Local;
 pub enum GitError {
     IoError(std::io::Error),
     FromUtf8Error(std::string::FromUtf8Error),
-    UnexpectedOutput(String),
     /// What git printed to stderr.
     GitExitStatusNonZero(String),
 }
@@ -87,22 +86,6 @@ fn uses_custom_ssh_command(path: &Path) -> bool {
         .stdin(Stdio::null())
         .output()
         .is_ok_and(|output| output.status.success() && !output.stdout.is_empty())
-}
-
-#[allow(dead_code)]
-pub fn date_of_most_recent_commit(path: &Path) -> Result<String, GitError> {
-    const DATE: &str = "Date:";
-
-    let s = run_git(path, ["log", "-n", "1", "--date=iso-strict"])?;
-    let line = s.lines().map(|line| line.trim()).find(|line| line.starts_with("Date:"));
-
-    let Some(line) = line else {
-        return Err(GitError::UnexpectedOutput(s));
-    };
-
-    let date = line[DATE.len()..].trim().to_string();
-
-    Ok(date)
 }
 
 pub fn add(path: &Path) -> Result<(), GitError> {

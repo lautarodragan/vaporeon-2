@@ -160,14 +160,6 @@ impl KeyBinding {
     pub fn new(code: KeyCode, modifiers: KeyModifiers) -> Self {
         Self { code, modifiers }
     }
-
-    pub fn code(&self) -> KeyCode {
-        self.code
-    }
-
-    pub fn modifiers(&self) -> KeyModifiers {
-        self.modifiers
-    }
 }
 
 impl From<KeyEvent> for KeyBinding {

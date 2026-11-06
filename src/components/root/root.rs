@@ -27,7 +27,6 @@ pub struct Root {
     pub(super) right_panel: RightPanel,
     pub(super) selected_panel: usize, // 0 = selected day, 1 = global
     pub(super) selected_date: NaiveDate,
-    pub(super) selected_status_list: usize,
     pub(super) project_filter: Option<usize>,
     /// What we know about each file on disk. See [`DataFile`].
     pub(super) snapshots: [FileSnapshot; 2],
@@ -52,7 +51,6 @@ impl Root {
             settings,
             selected_panel: 0,
             selected_date: Local::now().date_naive(),
-            selected_status_list: 0,
             project_filter: None,
             right_panel: RightPanel::Nothing,
             snapshots: Default::default(),
