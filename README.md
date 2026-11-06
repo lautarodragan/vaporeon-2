@@ -106,8 +106,8 @@ font = "Iosevka Term 14"
 Changes to this file are applied immediately, no need to restart.
 
 Tasks with details (a description) can be told apart without opening the details panel. `details_indicator` chooses
-how: a different bullet (`bullet`, the default, with `bullet_with_details`), a dimmed preview of the details after the
-title (`preview`), a dot in the margin (`gutter`), or a mark at the end of the row (`right`, with `details_marker`).
+how: a dimmed preview of the details after the title (`preview`, the default), a different bullet (`bullet`, with
+`bullet_with_details`), a dot in the margin (`gutter`), or a mark at the end of the row (`right`, with `details_marker`).
 None of them moves the text.
 
 Besides colors, the theme has `font` (any Pango font description), `line_height` and `window_decorations`

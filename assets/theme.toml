@@ -30,7 +30,7 @@ font = "Monospace 13"
 # - "gutter": a dot in the margin, to the left of the bullet (list_decoration_details is its color).
 # - "right": a mark (details_marker) at the right end of the row.
 # None of them moves the text.
-details_indicator = "bullet"
+details_indicator = "preview"
 bullet = "-"
 bullet_with_details = "="
 details_marker = "≡"
