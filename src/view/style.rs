@@ -21,6 +21,13 @@ const LINE_WIDTH: f64 = 1.0;
 const PROJECT_INDENT: f64 = 10.0;
 /// Space taken by the `-` before each task.
 const BULLET_WIDTH: f64 = 20.0;
+/// Width of the margin to the left of the bullets, for the dot of `details_indicator = "gutter"`. Taken from the
+/// indentation, so the bullets stay where they are.
+const GUTTER_WIDTH: f64 = 8.0;
+/// Size of that dot.
+const GUTTER_DOT: f64 = 4.0;
+/// Space between a task's title and the preview of its details.
+const PREVIEW_GAP: f64 = 20.0;
 /// Space between the options of a question in the status bar.
 const OPTION_GAP: f64 = 20.0;
 /// Space between the key of an option and its description.
@@ -68,6 +75,10 @@ pub fn css(theme: &Theme, metrics: &Metrics, zoom: f64) -> String {
     let bullet_width = px(BULLET_WIDTH);
     let option_gap = px(OPTION_GAP);
     let key_gap = px(KEY_GAP);
+    let gutter_width = px(GUTTER_WIDTH);
+    let gutter_dot = px(GUTTER_DOT);
+    let gutter_space = gutter_width - gutter_dot;
+    let preview_gap = px(PREVIEW_GAP);
     let background = css_color(theme.window_background());
     let entry = css_color(theme.list_entry);
     let entry_dim = css_color(theme.list_entry.dimmed());
@@ -168,9 +179,35 @@ window.vaporeon .bullet {{
     min-width: {bullet_width}px;
 }}
 
-/* Tasks with details (a description). */
+/* Tasks with details (a description). See details_indicator in the theme. */
 window.vaporeon .bullet.details {{
     color: {decoration_details};
+}}
+
+/* The gutter is taken from the indentation, so nothing moves. */
+window.vaporeon .task {{
+    margin-left: -{gutter_width}px;
+}}
+
+window.vaporeon .gutter {{
+    min-width: {gutter_dot}px;
+    min-height: {gutter_dot}px;
+    margin-right: {gutter_space}px;
+    border-radius: {gutter_dot}px;
+}}
+
+window.vaporeon .gutter.details {{
+    background-color: {decoration_details};
+}}
+
+window.vaporeon label.preview {{
+    color: {entry_dim};
+    margin-left: {preview_gap}px;
+}}
+
+window.vaporeon label.marker {{
+    color: {decoration_details};
+    margin-left: {preview_gap}px;
 }}
 
 window.vaporeon .project {{

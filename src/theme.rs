@@ -85,6 +85,20 @@ impl std::fmt::Display for Color {
     }
 }
 
+/// How tasks with details (a description) are told apart from the rest.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DetailsIndicator {
+    /// A different bullet (`bullet_with_details`).
+    Bullet,
+    /// The beginning of the details, dimmed, after the title.
+    Preview,
+    /// A dot in the margin, to the left of the bullet.
+    Gutter,
+    /// A mark (`details_marker`) at the right end of the row.
+    Right,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Theme {
     pub list_header: Color,
@@ -93,6 +107,8 @@ pub struct Theme {
     pub list_decoration_details: Color,
     pub bullet: String,
     pub bullet_with_details: String,
+    pub details_indicator: DetailsIndicator,
+    pub details_marker: String,
     pub list_left_line: Color,
     pub caret: Color,
     pub background: Color,

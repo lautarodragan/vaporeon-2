@@ -23,11 +23,17 @@ background_opacity = 0.75
 # For example "Iosevka Term 14", "JetBrains Mono Bold 12", or just "Monospace 13".
 font = "Monospace 13"
 
-# The bullet before each task, and the one for tasks with details (a description), so they can be told apart
-# without opening the details panel. They take the same space either way (it doesn't push the text).
-# Some ideas for bullet_with_details: "=", "≡", "·-", "-·", "+", or "-" with a different list_decoration_details.
+# How to tell apart tasks with details (a description) without opening the details panel:
+# - "bullet": a different bullet (bullet_with_details). Ideas: "=", "≡", "+", or "-" with another
+#   list_decoration_details.
+# - "preview": the beginning of the details, dimmed, after the title.
+# - "gutter": a dot in the margin, to the left of the bullet (list_decoration_details is its color).
+# - "right": a mark (details_marker) at the right end of the row.
+# None of them moves the text.
+details_indicator = "bullet"
 bullet = "-"
 bullet_with_details = "="
+details_marker = "≡"
 
 # Row height, as a multiple of the font's line height.
 line_height = 1.3

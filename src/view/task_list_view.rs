@@ -11,7 +11,10 @@ use std::{
 
 use gtk::{gdk, glib, prelude::*};
 
-use crate::components::{EditableTask, task_list::TaskList};
+use crate::{
+    components::{EditableTask, task_list::TaskList},
+    theme::DetailsIndicator,
+};
 
 /// Called when a task is clicked, with the indices of its status, project and task, and the number of clicks
 /// (2 for a double click).
@@ -64,18 +67,27 @@ impl Structure {
     }
 }
 
-/// The bullets before each task: one for tasks with details (a description), and one for the rest.
+/// How tasks with details (a description) look. See `details_indicator` in the theme.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Bullets {
-    pub plain: String,
-    pub with_details: String,
+pub struct DetailsStyle {
+    pub indicator: DetailsIndicator,
+    pub bullet: String,
+    pub bullet_with_details: String,
+    pub marker: String,
 }
 
+/// A task: `[gutter] [bullet] [title or editor] [preview] [marker]`.
 struct TaskRow {
     row: gtk::Box,
+    /// Dot in the margin, for tasks with details (`DetailsIndicator::Gutter`).
+    gutter: gtk::Box,
     bullet: gtk::Label,
     label: gtk::Label,
     editor: Option<gtk::Text>,
+    /// Beginning of the details (`DetailsIndicator::Preview`).
+    preview: gtk::Label,
+    /// Mark at the end of the row (`DetailsIndicator::Right`).
+    marker: gtk::Label,
 }
 
 impl TaskRow {
@@ -84,19 +96,36 @@ impl TaskRow {
         row.add_css_class("row");
         row.add_css_class("task");
 
+        let gutter = gtk::Box::builder().valign(gtk::Align::Center).build();
+        gutter.add_css_class("gutter");
+
         let bullet = gtk::Label::builder().label("-").xalign(0.0).build();
         bullet.add_css_class("bullet");
 
         let label = gtk::Label::builder()
             .xalign(0.0)
-            .hexpand(true)
             .single_line_mode(true)
             .ellipsize(gtk::pango::EllipsizeMode::End)
             .build();
         label.add_css_class("title");
 
+        // Takes the rest of the row, so the marker is at its right end.
+        let preview = gtk::Label::builder()
+            .xalign(0.0)
+            .hexpand(true)
+            .single_line_mode(true)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .build();
+        preview.add_css_class("preview");
+
+        let marker = gtk::Label::builder().xalign(1.0).visible(false).build();
+        marker.add_css_class("marker");
+
+        row.append(&gutter);
         row.append(&bullet);
         row.append(&label);
+        row.append(&preview);
+        row.append(&marker);
 
         let click = gtk::GestureClick::new();
         click.connect_pressed(move |gesture, n_press, _, _| {
@@ -192,7 +221,10 @@ impl TaskRow {
             row,
             label,
             editor: None,
+            gutter,
             bullet,
+            preview,
+            marker,
         }
     }
 
@@ -200,23 +232,38 @@ impl TaskRow {
         &mut self,
         task: &EditableTask,
         selected: bool,
-        bullets: &Bullets,
+        details: &DetailsStyle,
         on_edit: &OnEdit,
         syncing: &Rc<Cell<bool>>,
     ) {
-        let has_details = !task.description().trim().is_empty();
-        let bullet = if has_details {
-            &bullets.with_details
+        let description = task.description().trim();
+        let has_details = !description.is_empty();
+        let indicator = has_details.then_some(details.indicator);
+
+        let bullet = if indicator == Some(DetailsIndicator::Bullet) {
+            &details.bullet_with_details
         } else {
-            &bullets.plain
+            &details.bullet
         };
         if self.bullet.text() != bullet.as_str() {
             self.bullet.set_text(bullet);
         }
-        if has_details {
-            self.bullet.add_css_class("details");
-        } else {
-            self.bullet.remove_css_class("details");
+        set_class(&self.bullet, "details", indicator == Some(DetailsIndicator::Bullet));
+
+        set_class(&self.gutter, "details", indicator == Some(DetailsIndicator::Gutter));
+
+        // Only the first line of the details.
+        let preview = match indicator {
+            Some(DetailsIndicator::Preview) => description.lines().next().unwrap_or_default(),
+            _ => "",
+        };
+        if self.preview.text() != preview {
+            self.preview.set_text(preview);
+        }
+
+        self.marker.set_visible(indicator == Some(DetailsIndicator::Right));
+        if self.marker.text() != details.marker.as_str() {
+            self.marker.set_text(&details.marker);
         }
 
         if task.is_editing() {
@@ -241,7 +288,7 @@ impl TaskRow {
                 ));
 
                 self.row.remove(&self.label);
-                self.row.append(&editor);
+                self.row.insert_child_after(&editor, Some(&self.bullet));
                 editor.grab_focus_without_selecting();
                 editor.set_position(-1);
                 self.editor = Some(editor);
@@ -251,7 +298,7 @@ impl TaskRow {
 
         if let Some(editor) = self.editor.take() {
             self.row.remove(&editor);
-            self.row.append(&self.label);
+            self.row.insert_child_after(&self.label, Some(&self.bullet));
         }
 
         // An empty task still shows something to underline when selected.
@@ -338,7 +385,7 @@ impl TaskListView {
     ///
     /// With `scroll`, if the selection moved, scrolls so the selected task is visible. This is used for keyboard
     /// navigation. Mouse clicks don't scroll (the clicked task is already visible).
-    pub fn update(&mut self, list: &TaskList, has_focus: bool, scroll: bool, row_height: f64, bullets: &Bullets) {
+    pub fn update(&mut self, list: &TaskList, has_focus: bool, scroll: bool, row_height: f64, details: &DetailsStyle) {
         self.row_height.set(row_height);
 
         let structure = Structure::of(list);
@@ -358,7 +405,7 @@ impl TaskListView {
                         && s == list.selected_status_index()
                         && p == status.selected_project
                         && t == project.selected_task;
-                    row.update(task, selected, bullets, &self.on_edit, &self.syncing);
+                    row.update(task, selected, details, &self.on_edit, &self.syncing);
                 }
             }
         }
@@ -531,6 +578,14 @@ fn setup_drag_autoscroll(scrolled: &gtk::ScrolledWindow, row_height: Rc<Cell<f64
     ));
     motion.connect_leave(move |_| stop());
     scrolled.add_controller(motion);
+}
+
+fn set_class(widget: &impl IsA<gtk::Widget>, class: &str, enabled: bool) {
+    if enabled {
+        widget.add_css_class(class);
+    } else {
+        widget.remove_css_class(class);
+    }
 }
 
 /// Shows a line above (`Some(true)`) or below (`Some(false)`) a row, where a dragged task would be dropped.
