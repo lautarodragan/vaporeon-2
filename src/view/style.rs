@@ -27,7 +27,7 @@ const GUTTER_WIDTH: f64 = 8.0;
 /// Size of that dot.
 const GUTTER_DOT: f64 = 4.0;
 /// Space between a task's title and the preview of its details.
-const PREVIEW_GAP: f64 = 20.0;
+const PREVIEW_GAP: f64 = 8.0;
 /// Space between the options of a question in the status bar.
 const OPTION_GAP: f64 = 20.0;
 /// Space between the key of an option and its description.
