@@ -23,7 +23,7 @@ impl OnActions<Action, (bool, Option<TaskDetailsEvent>)> for &mut TaskDetails {
                 }
                 Action::Text(TextAction::CancelEdit) if self.is_editing => {
                     self.is_editing = false;
-                    return (true, Some(TaskDetailsEvent::EditCancelled));
+                    return (true, Some(TaskDetailsEvent::DescriptionConfirmed));
                 }
                 _ => {}
             }

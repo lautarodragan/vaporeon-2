@@ -36,6 +36,7 @@ impl OnActions for &mut Root {
                     Some(TaskDetailsEvent::DescriptionConfirmed) => {
                         let description = self.task_details.description().to_string();
                         self.selected_task_mut().set_description(description);
+                        self.selected_panel = 0;
                     }
                     Some(TaskDetailsEvent::EditCancelled) => {
                         // Throw away the edited text, show the task's description again.
@@ -98,6 +99,7 @@ impl OnActions for &mut Root {
                             let task = self.task_list_day.selected_status().selected_task();
                             self.task_details.set_title(task.title());
                             self.task_details.set_description(task.description());
+                            self.task_details.set_is_editing(true);
                             self.selected_panel = 1;
                         }
                         return;
@@ -107,6 +109,7 @@ impl OnActions for &mut Root {
                         let task = self.task_list_day.selected_status().selected_task();
                         self.task_details.set_title(task.title());
                         self.task_details.set_description(task.description());
+                        self.task_details.set_is_editing(true);
                         self.selected_panel = 1;
                         return;
                     }

@@ -17,6 +17,10 @@ impl TaskDetails {
         self.is_editing
     }
 
+    pub fn set_is_editing(&mut self, is_editing: bool) {
+        self.is_editing = is_editing;
+    }
+
     pub fn set_title(&mut self, title: &str) {
         self.title = title.to_string();
     }
