@@ -40,6 +40,8 @@ pub struct Metrics {
     pub line_height: f64,
     /// Height of the text itself (Pango's logical height of a line), in pixels.
     pub text_height: f64,
+    /// Width of a space, in pixels. With a monospace font, the width of any character.
+    pub space_width: f64,
 }
 
 impl Metrics {
@@ -48,9 +50,12 @@ impl Metrics {
         layout.set_font_description(Some(&theme.font_description()));
         layout.set_text("M");
         let text_height = layout.pixel_size().1 as f64;
+        layout.set_text(" ");
+        let space_width = layout.pixel_size().0 as f64;
         Self {
             line_height: (text_height * theme.line_height).round().max(text_height),
             text_height,
+            space_width,
         }
     }
 
