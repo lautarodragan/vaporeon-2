@@ -14,6 +14,7 @@ use gtk::{gdk, glib, prelude::*};
 use crate::{
     components::{EditableTask, task_list::TaskList},
     theme::DetailsIndicator,
+    view::fade_edges::FadeEdges,
 };
 
 /// Called when a task is clicked, with the indices of its status, project and task, and the number of clicks
@@ -324,7 +325,9 @@ impl TaskRow {
 }
 
 pub struct TaskListView {
-    pub scrolled: gtk::ScrolledWindow,
+    /// The scrolled list, with its edges faded out.
+    pub widget: FadeEdges,
+    scrolled: gtk::ScrolledWindow,
     content: gtk::Box,
     /// Task rows, by status, project and task.
     rows: Vec<Vec<Vec<TaskRow>>>,
@@ -350,6 +353,7 @@ impl TaskListView {
             .vexpand(true)
             .child(&content)
             .build();
+        super::scrollbars::hide(&scrolled);
 
         let pending_scroll: Rc<Cell<Option<(f64, f64)>>> = Rc::new(Cell::new(None));
         let row_height = Rc::new(Cell::new(1.0));
@@ -371,6 +375,7 @@ impl TaskListView {
         setup_drag_autoscroll(&scrolled, row_height.clone());
 
         Self {
+            widget: FadeEdges::new(&scrolled),
             scrolled,
             content,
             rows: vec![],
@@ -391,6 +396,7 @@ impl TaskListView {
     /// navigation. Mouse clicks don't scroll (the clicked task is already visible).
     pub fn update(&mut self, list: &TaskList, has_focus: bool, scroll: bool, row_height: f64, details: &DetailsStyle) {
         self.row_height.set(row_height);
+        self.widget.set_size(row_height);
 
         let structure = Structure::of(list);
         let rebuilt = self.structure.as_ref() != Some(&structure);

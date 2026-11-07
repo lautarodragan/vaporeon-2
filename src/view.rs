@@ -49,6 +49,8 @@ use crate::{
 };
 
 mod details_view;
+mod fade_edges;
+mod scrollbars;
 mod status_bar;
 mod style;
 mod task_list_view;
@@ -240,11 +242,11 @@ impl Ui {
 
             let right_stack = gtk::Stack::builder().hexpand(true).vexpand(true).build();
             right_stack.add_named(&gtk::Box::new(gtk::Orientation::Vertical, 0), Some("nothing"));
-            right_stack.add_named(&global.scrolled, Some("global"));
-            right_stack.add_named(&details.scrolled, Some("details"));
+            right_stack.add_named(&global.widget, Some("global"));
+            right_stack.add_named(&details.widget, Some("details"));
 
             // Clicking on an empty part of a panel focuses it.
-            add_panel_click(&day.scrolled, Panel::Left, app, ui);
+            add_panel_click(&day.widget, Panel::Left, app, ui);
             add_panel_click(&right_stack, Panel::Right, app, ui);
 
             let panels = gtk::Box::builder()
@@ -252,7 +254,7 @@ impl Ui {
                 .homogeneous(true)
                 .vexpand(true)
                 .build();
-            panels.append(&day.scrolled);
+            panels.append(&day.widget);
             panels.append(&right_stack);
 
             let header = gtk::DrawingArea::builder().hexpand(true).focusable(true).build();
@@ -423,7 +425,7 @@ impl Ui {
         let single_panel = (width as f64) < TWO_PANELS_MIN_WIDTH * self.zoom.get();
         self.day
             .borrow()
-            .scrolled
+            .widget
             .set_visible(!single_panel || focus == Panel::Left);
         self.right_stack.set_visible(!single_panel || focus == Panel::Right);
 

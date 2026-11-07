@@ -7,10 +7,15 @@ use std::{cell::Cell, rc::Rc};
 
 use gtk::{glib, prelude::*};
 
-use crate::{canvas::Metrics, components::task_details::TaskDetails, view::task_list_view::OnEdit};
+use crate::{
+    canvas::Metrics,
+    components::task_details::TaskDetails,
+    view::{fade_edges::FadeEdges, task_list_view::OnEdit},
+};
 
 pub struct DetailsView {
-    pub scrolled: gtk::ScrolledWindow,
+    /// The scrolled details, with their edges faded out.
+    pub widget: FadeEdges,
     title: gtk::Label,
     text_view: gtk::TextView,
     is_editing: Rc<Cell<bool>>,
@@ -52,6 +57,7 @@ impl DetailsView {
             .vexpand(true)
             .child(&content)
             .build();
+        super::scrollbars::hide(&scrolled);
 
         let is_editing = Rc::new(Cell::new(false));
 
@@ -81,7 +87,7 @@ impl DetailsView {
         text_view.add_controller(click);
 
         Self {
-            scrolled,
+            widget: FadeEdges::new(&scrolled),
             title,
             text_view,
             is_editing,
@@ -90,6 +96,7 @@ impl DetailsView {
     }
 
     pub fn update(&mut self, details: &TaskDetails, has_focus: bool, metrics: &Metrics) {
+        self.widget.set_size(metrics.line_height);
         if self.title.text() != details.title() {
             self.title.set_text(details.title());
         }
