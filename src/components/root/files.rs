@@ -6,7 +6,6 @@ use std::{fs::read_to_string, path::PathBuf};
 use chrono::Local;
 
 use super::{Root, root::Event};
-use crate::action::{Action, OnActions, TextAction};
 
 /// One of the files the UI shows.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -171,7 +170,7 @@ impl Root {
     fn reload(&mut self, file: DataFile) {
         // Whatever was being edited belongs to the old version.
         if self.is_editing(file) {
-            self.on_actions(vec![Action::Text(TextAction::CancelEdit)]);
+            self.cancel_editing();
         }
         match file {
             DataFile::Day => self.load_selected_day(),

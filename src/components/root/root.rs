@@ -264,6 +264,13 @@ impl Root {
         }
     }
 
+    /// Opens the details panel, with the selected task, and focuses it.
+    pub(super) fn open_details_panel(&mut self) {
+        self.right_panel = RightPanel::TaskDetails;
+        self.on_selection_change();
+        self.selected_panel = 1;
+    }
+
     pub(super) fn on_selection_change(&mut self) {
         let task = self.task_list_day.selected_status().selected_task();
         self.task_details.set_title(task.title());
@@ -299,6 +306,15 @@ impl Root {
         match self.editing() {
             Some(EditTarget::TaskTitle) => self.on_actions(vec![Action::Text(TextAction::ConfirmEdit)]),
             Some(EditTarget::TaskDetails) => self.on_actions(vec![Action::Text(TextAction::ConfirmEditMultiLine)]),
+            None => {}
+        }
+    }
+
+    /// Stops editing, throwing away the changes.
+    pub fn cancel_editing(&mut self) {
+        match self.editing() {
+            Some(EditTarget::TaskTitle) => self.on_actions(vec![Action::Text(TextAction::CancelEdit)]),
+            Some(EditTarget::TaskDetails) => self.on_actions(vec![Action::Text(TextAction::CancelEditMultiLine)]),
             None => {}
         }
     }
@@ -432,8 +448,7 @@ impl Root {
         }
         self.finish_editing();
         self.focus_panel(Panel::Right);
-        self.task_details
-            .on_actions(vec![Action::Text(TextAction::EnterEditMode)]);
+        self.task_details.start_editing();
     }
 }
 
@@ -505,6 +520,7 @@ pub enum RightPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::action::{Actions, KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
     fn click_selects_and_double_click_edits() {
@@ -530,6 +546,58 @@ mod tests {
             root.task_list_day.status_lists()[2].tasks_by_project[2].tasks[0].title(),
             "hola"
         );
+    }
+
+    /// The actions of a key, with the default key bindings.
+    fn key(code: KeyCode, modifiers: KeyModifiers) -> Vec<Action> {
+        Actions::default().actions_by_key(KeyEvent::new(code, modifiers))
+    }
+
+    fn selected_description(root: &Root) -> &str {
+        root.task_list_day.selected_status().selected_task().description()
+    }
+
+    #[test]
+    fn enter_edits_the_description_and_esc_saves_it() {
+        let mut root = Root::new(Settings::default());
+
+        root.on_actions(key(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(root.right_panel, RightPanel::TaskDetails);
+        assert_eq!(root.selected_panel(), Panel::Right);
+        assert_eq!(root.editing(), Some(EditTarget::TaskDetails));
+
+        root.set_editing_text("hola".to_string());
+        root.on_actions(key(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(root.editing(), None);
+        assert_eq!(selected_description(&root), "hola");
+        // Back to the list, with the panel still open.
+        assert_eq!(root.selected_panel(), Panel::Left);
+        assert_eq!(root.right_panel, RightPanel::TaskDetails);
+    }
+
+    #[test]
+    fn cancelling_a_description_edit_restores_it() {
+        let mut root = Root::new(Settings::default());
+        root.on_actions(key(KeyCode::Enter, KeyModifiers::NONE));
+        root.set_editing_text("hola".to_string());
+        root.cancel_editing();
+        assert_eq!(root.editing(), None);
+        assert_eq!(selected_description(&root), "");
+        assert_eq!(root.task_details.description(), "");
+        assert_eq!(root.selected_panel(), Panel::Left);
+    }
+
+    #[test]
+    fn shift_enter_edits_the_title_and_esc_cancels_it() {
+        let mut root = Root::new(Settings::default());
+        root.on_actions(key(KeyCode::Enter, KeyModifiers::SHIFT));
+        assert_eq!(root.editing(), Some(EditTarget::TaskTitle));
+        assert_eq!(root.right_panel, RightPanel::Nothing);
+
+        root.set_editing_text("hola".to_string());
+        root.on_actions(key(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(root.editing(), None);
+        assert_eq!(root.task_list_day.selected_status().selected_task().title(), "");
     }
 
     #[test]

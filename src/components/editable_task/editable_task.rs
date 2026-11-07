@@ -94,12 +94,12 @@ impl EditableTask {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::{Action, OnActions, TextAction};
+    use crate::action::{Action, OnActions, TaskAction, TextAction};
 
     #[test]
     fn cancel_restores_title() {
         let mut task = EditableTask::new("hola".to_string(), "".to_string());
-        assert!(task.on_actions(vec![Action::Text(TextAction::EnterEditMode)]));
+        assert!(task.on_actions(vec![Action::Task(TaskAction::EditTitle)]));
         task.set_title("chau".to_string());
         assert!(task.on_actions(vec![Action::Text(TextAction::CancelEdit)]));
         assert_eq!(task.title(), "hola");
@@ -109,7 +109,7 @@ mod tests {
     #[test]
     fn confirm_keeps_title() {
         let mut task = EditableTask::new("hola".to_string(), "".to_string());
-        task.on_actions(vec![Action::Text(TextAction::EnterEditMode)]);
+        task.on_actions(vec![Action::Task(TaskAction::EditTitle)]);
         task.set_title("chau".to_string());
         task.on_actions(vec![Action::Text(TextAction::ConfirmEdit)]);
         assert_eq!(task.title(), "chau");

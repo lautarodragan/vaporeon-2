@@ -216,7 +216,7 @@ mod tests {
         let mut root = new_root();
         add(&mut root, "a");
         root.task_list_day.select(0, 0, 0);
-        root.on_actions(vec![Action::Text(TextAction::EnterEditMode)]);
+        root.on_actions(vec![Action::Task(TaskAction::EditTitle)]);
         for title in ["ab", "abc", "abcd"] {
             root.set_editing_text(title.to_string());
             root.checkpoint(); // Ignored while editing.

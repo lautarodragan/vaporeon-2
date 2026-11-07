@@ -63,8 +63,9 @@ Text is edited with regular GTK text widgets, placed exactly where the text is d
 shortcuts work while editing (Ctrl+Backspace, Ctrl+A, Shift+arrows, Ctrl+Z, etc.), as well as dead keys,
 compose sequences and input methods.
 
-`actions.ini` only controls entering and leaving edit mode (`Text.EnterEditMode`, `Text.ConfirmEdit`,
-`Text.ConfirmEditMultiLine` and `Text.CancelEdit`). Cancelling an edit restores the previous text.
+`actions.ini` only controls entering and leaving edit mode: `Task.EditTitle` and `Task.EditDescription` enter it,
+and `Text.ConfirmEdit` and `Text.CancelEdit` (for titles) or `Text.ConfirmEditMultiLine` and
+`Text.CancelEditMultiLine` (for descriptions) leave it. Cancelling an edit restores the previous text.
 
 ## Building
 

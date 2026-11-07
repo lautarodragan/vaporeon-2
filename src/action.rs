@@ -195,6 +195,10 @@ pub enum ApplicationAction {
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug, Hash, EnumString, Ord, PartialOrd)]
 pub enum TaskAction {
+    /// Edits the selected task's title, in the list.
+    EditTitle,
+    /// Edits the selected task's description, in the details panel (opening it if needed).
+    EditDescription,
     Create,
     Delete,
     Duplicate,
@@ -238,10 +242,14 @@ pub enum NavigationAction {
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug, Hash, EnumString, Ord, PartialOrd)]
 pub enum TextAction {
-    EnterEditMode,
+    /// Ends editing a single-line text (a title), keeping the changes.
     ConfirmEdit,
-    ConfirmEditMultiLine,
+    /// Ends editing a single-line text, restoring the previous text.
     CancelEdit,
+    /// Ends editing a multi-line text (a description), keeping the changes.
+    ConfirmEditMultiLine,
+    /// Ends editing a multi-line text, restoring the previous text.
+    CancelEditMultiLine,
 }
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug, Hash, EnumString, Ord, PartialOrd)]

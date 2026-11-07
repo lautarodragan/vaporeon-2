@@ -1,6 +1,6 @@
 use super::Root;
 use crate::{
-    action::{Action, DayAction, NavigationAction, OnActions},
+    action::{Action, DayAction, NavigationAction, OnActions, TaskAction},
     components::{root::root::RightPanel, task_details::TaskDetailsEvent, task_list::TaskListEvent},
 };
 
@@ -33,6 +33,7 @@ impl OnActions for &mut Root {
 
             if handled {
                 match event {
+                    // Done editing: back to the list, where the task is.
                     Some(TaskDetailsEvent::DescriptionConfirmed) => {
                         let description = self.task_details.description().to_string();
                         self.selected_task_mut().set_description(description);
@@ -41,6 +42,7 @@ impl OnActions for &mut Root {
                     Some(TaskDetailsEvent::EditCancelled) => {
                         // Throw away the edited text, show the task's description again.
                         self.on_selection_change();
+                        self.selected_panel = 0;
                     }
                     None => {}
                 }
@@ -95,22 +97,12 @@ impl OnActions for &mut Root {
                             self.right_panel = RightPanel::Nothing;
                             self.selected_panel = 0;
                         } else {
-                            self.right_panel = RightPanel::TaskDetails;
-                            let task = self.task_list_day.selected_status().selected_task();
-                            self.task_details.set_title(task.title());
-                            self.task_details.set_description(task.description());
-                            self.task_details.set_is_editing(true);
-                            self.selected_panel = 1;
+                            self.open_details_panel();
                         }
                         return;
                     }
                     NavigationAction::OpenDetailsPanel => {
-                        self.right_panel = RightPanel::TaskDetails;
-                        let task = self.task_list_day.selected_status().selected_task();
-                        self.task_details.set_title(task.title());
-                        self.task_details.set_description(task.description());
-                        self.task_details.set_is_editing(true);
-                        self.selected_panel = 1;
+                        self.open_details_panel();
                         return;
                     }
                     NavigationAction::CloseDetailsPanel => {
@@ -138,6 +130,12 @@ impl OnActions for &mut Root {
                     }
                     _ => {}
                 },
+                // The details panel shows the day's selected task, so this is only for the day's list.
+                Action::Task(TaskAction::EditDescription) if self.selected_panel == 0 => {
+                    self.open_details_panel();
+                    self.task_details.start_editing();
+                    return;
+                }
                 Action::Day(day_action) => match day_action {
                     DayAction::SaveAsTemplate => {
                         self.save_as_template();

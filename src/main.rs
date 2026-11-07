@@ -311,7 +311,7 @@ fn ends_editing(target: EditTarget, action: &Action) -> bool {
             Action::Text(TextAction::ConfirmEdit | TextAction::CancelEdit)
         ) | (
             EditTarget::TaskDetails,
-            Action::Text(TextAction::ConfirmEditMultiLine | TextAction::CancelEdit)
+            Action::Text(TextAction::ConfirmEditMultiLine | TextAction::CancelEditMultiLine)
         )
     )
 }
