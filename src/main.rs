@@ -36,7 +36,13 @@ mod theme;
 mod toml_io;
 mod view;
 
-const APP_ID: &str = "codes.taro.Vaporeon";
+/// Debug builds (`cargo run`) get their own id, so they can run alongside the installed build (the app is
+/// single-instance).
+const APP_ID: &str = if cfg!(debug_assertions) {
+    "codes.taro.Vaporeon.debug"
+} else {
+    "codes.taro.Vaporeon"
+};
 
 pub struct App {
     root: Root,

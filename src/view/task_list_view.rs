@@ -261,12 +261,16 @@ impl TaskRow {
             self.preview.set_text(preview);
         }
 
-        self.marker.set_visible(indicator == Some(DetailsIndicator::Right));
+        // While editing, the editor gets the whole row.
+        let editing = task.is_editing();
+        self.preview.set_visible(!editing);
+        self.marker
+            .set_visible(indicator == Some(DetailsIndicator::Right) && !editing);
         if self.marker.text() != details.marker.as_str() {
             self.marker.set_text(&details.marker);
         }
 
-        if task.is_editing() {
+        if editing {
             if self.editor.is_none() {
                 let editor = gtk::Text::builder().hexpand(true).valign(gtk::Align::Center).build();
                 editor.add_css_class("title");
