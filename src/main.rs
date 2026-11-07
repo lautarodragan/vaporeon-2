@@ -37,7 +37,7 @@ mod toml_io;
 mod view;
 
 /// Debug builds (`cargo run`) get their own id, so they can run alongside the installed build (the app is
-/// single-instance).
+/// single-instance) and targeted separately by Hyprland rules.
 const APP_ID: &str = if cfg!(debug_assertions) {
     "codes.taro.Vaporeon.debug"
 } else {
