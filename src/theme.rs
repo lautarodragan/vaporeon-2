@@ -109,6 +109,7 @@ pub struct Theme {
     pub bullet_with_details: String,
     pub details_indicator: DetailsIndicator,
     pub details_marker: String,
+    pub details_wrap: bool,
     pub list_left_line: Color,
     pub caret: Color,
     pub background: Color,

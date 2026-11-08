@@ -35,6 +35,10 @@ bullet = "-"
 bullet_with_details = "="
 details_marker = "≡"
 
+# Whether long lines of the details wrap (at words, or anywhere if a word doesn't fit). Without wrapping,
+# the details scroll sideways.
+details_wrap = true
+
 # Row height, as a multiple of the font's line height.
 line_height = 1.3
 

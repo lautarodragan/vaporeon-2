@@ -408,9 +408,12 @@ impl Ui {
             metrics.line_height,
             &details,
         );
-        self.details
-            .borrow_mut()
-            .update(root.task_details(), focus == Panel::Right, &metrics);
+        self.details.borrow_mut().update(
+            root.task_details(),
+            focus == Panel::Right,
+            &metrics,
+            app.theme.details_wrap,
+        );
 
         self.right_stack.set_visible_child_name(match root.right_panel() {
             RightPanel::Nothing => "nothing",

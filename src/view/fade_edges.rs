@@ -93,6 +93,9 @@ impl FadeEdges {
         let widget: Self = glib::Object::new();
         widget.imp().size.set(24.0);
         scrolled.set_parent(&widget);
+        // A plain widget doesn't take its children's expand flags.
+        widget.set_hexpand(scrolled.hexpands());
+        widget.set_vexpand(scrolled.vexpands());
 
         // Which edges fade depends on the scroll position and the size of the content.
         for adjustment in [scrolled.vadjustment(), scrolled.hadjustment()] {
