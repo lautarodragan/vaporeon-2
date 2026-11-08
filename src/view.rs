@@ -58,6 +58,8 @@ mod task_list_view;
 /// Below this width (in pixels), only one panel is shown, using the full width.
 /// At 100% zoom: it's scaled with the zoom.
 const TWO_PANELS_MIN_WIDTH: f64 = 900.0;
+/// Space between the two panels, in characters (spaces) of the font.
+const PANEL_GAP: f64 = 2.0;
 
 /// How long to wait after a file changes before checking it. Programs (and git) often write files in several steps.
 const FILE_CHANGE_DELAY: Duration = Duration::from_millis(250);
@@ -335,6 +337,9 @@ impl Ui {
         self.css.load_from_string(&style::css(theme, &metrics, zoom));
         self.header
             .set_content_height((metrics.line_height * HEADER_ROWS).round() as i32);
+        // Boxes only put spacing between visible children, so there's no gap with a single panel.
+        self.panels
+            .set_spacing((PANEL_GAP * metrics.space_width).round() as i32);
         self.window.set_decorated(theme.window_decorations);
     }
 
