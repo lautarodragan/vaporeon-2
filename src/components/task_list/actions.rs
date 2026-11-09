@@ -80,7 +80,8 @@ impl OnActions<Action, (bool, Option<TaskListEvent>)> for &mut TaskList {
                         {
                             return (true, None);
                         }
-                        let (project_id, task_text, task_details) = {
+                        // The task itself moves, keeping its id.
+                        let (project_id, task) = {
                             let list = &mut self.status_lists[self.selected_status_list];
                             let project = &mut list.tasks_by_project[list.selected_project];
 
@@ -88,8 +89,8 @@ impl OnActions<Action, (bool, Option<TaskListEvent>)> for &mut TaskList {
                                 return (true, None);
                             }
 
-                            let (task_text, task_details) = if project.tasks.len() == 1 {
-                                (project.tasks[0].take_title(), project.tasks[0].take_description())
+                            let task = if project.tasks.len() == 1 {
+                                std::mem::replace(&mut project.tasks[0], EditableTask::empty())
                             } else {
                                 let task = project.tasks.remove(project.selected_task);
 
@@ -97,11 +98,10 @@ impl OnActions<Action, (bool, Option<TaskListEvent>)> for &mut TaskList {
                                     project.selected_task -= 1;
                                 }
 
-                                task.into_parts()
+                                task
                             };
-                            let project_id = project.project_id;
 
-                            (project_id, task_text, task_details)
+                            (project.project_id, task)
                         };
 
                         if task_action == TaskAction::MoveToNextStatus {
@@ -121,10 +121,9 @@ impl OnActions<Action, (bool, Option<TaskListEvent>)> for &mut TaskList {
                             if let Some(last) = target_project.tasks.last_mut()
                                 && last.is_empty()
                             {
-                                last.set_title(task_text);
-                                last.set_description(task_details);
+                                *last = task;
                             } else {
-                                target_project.tasks.push(EditableTask::new(task_text, task_details));
+                                target_project.tasks.push(task);
                             }
                             target_list.selected_project = index;
                         } else {
@@ -138,7 +137,7 @@ impl OnActions<Action, (bool, Option<TaskListEvent>)> for &mut TaskList {
                                     .unwrap()
                                     .name
                                     .clone(),
-                                tasks: vec![EditableTask::new(task_text, task_details)],
+                                tasks: vec![task],
                                 selected_task: 0,
                                 show_title: false,
                             });

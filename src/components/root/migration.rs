@@ -58,12 +58,17 @@ impl Root {
     }
 
     /// Copies the unfinished (to do, doing) tasks of a day to the selected day, to the same status and project.
-    /// Tasks that are already there (same title) aren't copied again. Returns how many tasks were copied.
+    /// They keep their ids: they're the same tasks, on another day. Tasks that are already there (same id, or same
+    /// title) aren't copied again. Returns how many tasks were copied.
     pub fn copy_unfinished_from(&mut self, date: NaiveDate) -> usize {
         let mut copied = 0;
 
         for task in self.day_file(date).tasks {
             if !self.is_unfinished(&task) {
+                continue;
+            }
+
+            if task.id.is_some_and(|id| self.task_list_day.contains_id(id)) {
                 continue;
             }
 
@@ -80,7 +85,7 @@ impl Root {
                 continue;
             }
 
-            let new_task = EditableTask::new(task.text, task.details.unwrap_or_default());
+            let new_task = EditableTask::from_day_task(&task);
             // Before the empty task at the end of the project, if there's one, so it stays at the end.
             let empty_index = project
                 .tasks
@@ -118,6 +123,7 @@ mod tests {
 
     fn task(text: &str, status: TaskStatus) -> Task {
         Task {
+            id: None,
             text: text.to_string(),
             project_id: 0,
             status,
@@ -177,6 +183,28 @@ mod tests {
         assert!(root.migration_offer().is_some());
         root.decline_migration();
         assert_eq!(root.migration_offer(), None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn copied_tasks_keep_their_ids_and_template_tasks_get_new_ones() {
+        let dir = temp_dir("migration-ids");
+        let id = uuid::Uuid::from_u128(42);
+        write_day(&dir, 1, vec![Task {
+            id: Some(id),
+            ..task("a", TaskStatus::ToDo)
+        }]);
+        let mut root = root_in(&dir);
+        assert_eq!(root.copy_unfinished_from(Local::now().date_naive() - Days::new(1)), 1);
+        assert!(root.task_list_day.contains_id(id));
+
+        // Renamed today: still the same task, so it's not copied again.
+        root.task_list_day.status_lists_mut()[0].tasks_by_project[0].tasks[0].set_title("b".to_string());
+        assert_eq!(root.copy_unfinished_from(Local::now().date_naive() - Days::new(1)), 0);
+
+        root.save_as_template();
+        root.load_from_template();
+        assert!(!root.task_list_day.contains_id(id));
         let _ = std::fs::remove_dir_all(dir);
     }
 }

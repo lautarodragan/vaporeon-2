@@ -84,7 +84,7 @@ impl Root {
             DataFile::Day => self.to_day(),
             DataFile::Global => self.to_day_global(),
         };
-        toml::to_string(&day).unwrap_or_default()
+        crate::format::day_to_string(&day)
     }
 
     /// Remembers the file as it is now on disk, and the model as it is now. Called after loading or saving it.

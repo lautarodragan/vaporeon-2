@@ -5,6 +5,7 @@ use std::{
 
 use chrono::{Local, NaiveDate};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::toml_io::{TomlFileError, read_toml_file_path};
 
@@ -59,17 +60,20 @@ impl Day {
     pub fn to_file(&self, directory: &Path, file_name: String) -> Result<(), TomlFileError> {
         create_dir_all(directory)?;
         let path = directory.join(file_name + ".toml");
-        let serialized = toml::to_string(&self)?;
-        write(path, serialized)?;
+        write(path, crate::format::day_to_string(self))?;
         Ok(())
     }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Task {
+    /// Missing in files written by older versions. See `docs/file-format.md`.
+    #[serde(default)]
+    pub id: Option<Uuid>,
     pub text: String,
     pub project_id: usize,
     pub status: TaskStatus,
+    #[serde(default)]
     pub details: Option<String>,
 }
 

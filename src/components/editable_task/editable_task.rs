@@ -1,9 +1,13 @@
+use uuid::Uuid;
+
 use crate::models::Task as DayTask;
 
 /// A task in a task list. The text itself is edited by a GTK text widget (see `main.rs`);
 /// this only keeps track of whether the task is being edited.
 #[derive(Clone, Debug)]
 pub struct EditableTask {
+    /// Tells it's the same task in different versions of a file (see `docs/file-format.md`).
+    pub(super) id: Uuid,
     pub(super) title: String,
     pub(super) description: String,
     pub(super) is_editing: bool,
@@ -14,6 +18,7 @@ pub struct EditableTask {
 impl EditableTask {
     pub fn new(title: String, description: String) -> Self {
         Self {
+            id: Uuid::new_v4(),
             title,
             description,
             is_editing: false,
@@ -25,8 +30,26 @@ impl EditableTask {
         Self::new("".to_string(), "".to_string())
     }
 
+    /// Keeps the task's id, if it has one.
     pub fn from_day_task(day_task: &DayTask) -> Self {
-        Self::new(day_task.text.clone(), day_task.details.clone().unwrap_or_default())
+        Self {
+            id: day_task.id.unwrap_or_else(Uuid::new_v4),
+            ..Self::new(day_task.text.clone(), day_task.details.clone().unwrap_or_default())
+        }
+    }
+
+    /// A copy of the task, as a new task: with a new id, and not being edited.
+    pub fn duplicate(&self) -> Self {
+        Self::new(self.title.clone(), self.description.clone())
+    }
+
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+
+    /// Gives the task a new id. For tasks that are copies of others, e.g. from the template.
+    pub fn new_id(&mut self) {
+        self.id = Uuid::new_v4();
     }
 
     pub fn is_editing(&self) -> bool {
@@ -76,14 +99,6 @@ impl EditableTask {
 
     pub fn set_title(&mut self, v: String) {
         self.title = v;
-    }
-
-    pub fn take_description(&mut self) -> String {
-        std::mem::take(&mut self.description)
-    }
-
-    pub fn into_parts(self) -> (String, String) {
-        (self.title, self.description)
     }
 
     pub fn clear(&mut self) {

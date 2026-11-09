@@ -13,6 +13,11 @@ and when closing the window.
 
 A `•` next to the date means the day has unsaved changes. Messages (like "Saved", or errors) show up at the bottom.
 
+Files are written in one canonical form, so that different apps (or versions) write the same bytes for the same tasks,
+and every task has an id, so that it's the same task in different versions of a file. See
+[`docs/file-format.md`](docs/file-format.md). Files written by older versions are read as they are, and written in this
+form the next time they're saved.
+
 ### Syncing with a git remote
 
 If `storage_path` is a git repository with a remote (e.g. a private GitHub repository), Vaporeon keeps it in sync:

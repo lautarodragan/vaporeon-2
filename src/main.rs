@@ -26,6 +26,7 @@ mod action;
 mod canvas;
 mod clipboard;
 mod components;
+mod format;
 mod git;
 mod log_format;
 mod models;

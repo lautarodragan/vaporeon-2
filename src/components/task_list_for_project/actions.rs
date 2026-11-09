@@ -53,7 +53,7 @@ impl OnActions<Action, (bool, Option<TaskListEvent>)> for &mut TaskListForProjec
                         return (true, Some(TaskListEvent::SelectionChanged));
                     }
                     TaskAction::Duplicate if !self.tasks.is_empty() => {
-                        let task = self.tasks[self.selected_task].clone();
+                        let task = self.tasks[self.selected_task].duplicate();
                         self.tasks.insert(self.selected_task + 1, task);
                         self.selected_task += 1;
                         return (true, Some(TaskListEvent::SelectionChanged));

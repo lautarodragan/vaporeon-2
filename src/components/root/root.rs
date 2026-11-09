@@ -83,6 +83,8 @@ impl Root {
         let file_name = "template".to_string();
         let path = self.settings.storage_path.join(file_name + ".toml");
         self.task_list_day.load_file(path.as_path());
+        // Each day gets its own tasks: they're not the template's.
+        self.task_list_day.new_ids();
     }
 
     pub fn load_global(&mut self) {
@@ -394,7 +396,7 @@ impl Root {
             .and_then(|list| list.tasks_by_project.get(from.project))
             .map(|project| project.tasks.len())
             .unwrap_or(0);
-        let Some((title, description)) = source.take_task(from.status, from.project, from.task) else {
+        let Some(task) = source.take_task(from.status, from.project, from.task) else {
             return false;
         };
 
@@ -405,7 +407,7 @@ impl Root {
         }
 
         if let Some(target) = self.list_mut(to.panel) {
-            target.insert_task(to.status, to.project, to.task, title, description);
+            target.insert(to.status, to.project, to.task, task);
         }
 
         self.focus_panel(to.panel);
@@ -520,7 +522,10 @@ pub enum RightPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::{Actions, KeyCode, KeyEvent, KeyModifiers};
+    use crate::{
+        action::{Actions, ApplicationAction, KeyCode, KeyEvent, KeyModifiers, TaskAction},
+        models::Day,
+    };
 
     #[test]
     fn click_selects_and_double_click_edits() {
@@ -697,5 +702,89 @@ mod tests {
         root.click_task(Panel::Left, 9, 9, 9, true);
         assert_eq!(root.task_list_day.selected_status_index(), 0);
         assert_eq!(root.editing(), None);
+    }
+
+    fn task_id(root: &Root, status: usize, project: usize, task: usize) -> uuid::Uuid {
+        root.task_list_day.status_lists()[status].tasks_by_project[project].tasks[task].id()
+    }
+
+    #[test]
+    fn moving_a_task_keeps_its_id() {
+        let mut root = root_with_tasks();
+        let id = task_id(&root, 0, 0, 0);
+
+        // Dragged within its project, and to another status.
+        assert!(root.move_task(pos(0, 0, 0), pos(0, 0, 2)));
+        assert_eq!(task_id(&root, 0, 0, 1), id);
+        assert!(root.move_task(pos(0, 0, 1), pos(1, 0, 0)));
+        assert_eq!(task_id(&root, 1, 0, 0), id);
+
+        // Moved with the keyboard, back to TODO (the only task in DOING: an empty one takes its place).
+        root.task_list_day.select(1, 0, 0);
+        root.on_actions(vec![Action::Task(TaskAction::MoveToPreviousStatus)]);
+        let todo = &root.task_list_day.status_lists()[0].tasks_by_project[0].tasks;
+        assert_eq!(todo.last().unwrap().id(), id);
+        assert_ne!(task_id(&root, 1, 0, 0), id);
+    }
+
+    #[test]
+    fn duplicating_and_pasting_make_new_ids() {
+        let mut root = root_with_tasks();
+        let id = task_id(&root, 0, 0, 0);
+        root.task_list_day.select(0, 0, 0);
+        root.on_actions(vec![Action::Task(TaskAction::Duplicate)]);
+        assert_eq!(titles(&root, 0, 0), ["a", "a", "b", "c"]);
+        assert_ne!(task_id(&root, 0, 0, 1), id);
+
+        root.on_actions(vec![Action::Application(ApplicationAction::PasteText("a".to_string()))]);
+        let ids: std::collections::HashSet<_> = (0..5).map(|i| task_id(&root, 0, 0, i)).collect();
+        assert_eq!(ids.len(), 5);
+    }
+
+    #[test]
+    fn loading_gives_ids_to_tasks_without_one_or_with_a_repeated_one() {
+        // As written by older versions, or copied by hand.
+        let day: Day = toml::from_str(
+            r#"
+            date_time = "2026-11-09"
+            [[tasks]]
+            text = 'old "style"'
+            project_id = 0
+            status = "ToDo"
+            details = ""
+            [[tasks]]
+            id = "00000000-0000-0000-0000-000000000001"
+            text = "a"
+            project_id = 0
+            status = "ToDo"
+            [[tasks]]
+            id = "00000000-0000-0000-0000-000000000001"
+            text = "a, copied"
+            project_id = 0
+            status = "ToDo"
+            [[tasks]]
+            text = ""
+            project_id = 1
+            status = "Done"
+            details = ""
+            "#,
+        )
+        .unwrap();
+        let mut root = Root::new(Settings::default());
+        root.task_list_day.load_day(day);
+
+        let saved = root.to_day();
+        let written: Vec<_> = saved.tasks.iter().filter(|t| !t.text.is_empty()).collect();
+        assert_eq!(written.len(), 3);
+        let ids: std::collections::HashSet<_> = written.iter().map(|t| t.id.unwrap()).collect();
+        assert_eq!(ids.len(), 3);
+        assert_eq!(written[1].id, Some(uuid::Uuid::from_u128(1)));
+
+        // Written in the canonical form: no empty tasks, the same ids when read again.
+        let text = crate::format::day_to_string(&saved);
+        assert!(!text.contains("text = \"\""), "{text}");
+        let reread: Day = toml::from_str(&text).unwrap();
+        let reread_ids: std::collections::HashSet<_> = reread.tasks.iter().map(|t| t.id.unwrap()).collect();
+        assert_eq!(reread_ids, ids);
     }
 }

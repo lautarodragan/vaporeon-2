@@ -1,6 +1,7 @@
-use std::path::Path;
+use std::{collections::HashSet, path::Path};
 
 use chrono::NaiveDate;
+use uuid::Uuid;
 
 use crate::{
     components::{EditableTask, task_list_for_status::TaskListForStatus},
@@ -74,6 +75,7 @@ impl TaskList {
             .flat_map(|list| {
                 list.tasks_by_project.iter().flat_map(|project| {
                     project.tasks.iter().map(|task| Task {
+                        id: Some(task.id()),
                         text: task.title().to_string(),
                         project_id: project.project_id,
                         status: list.status.clone(),
@@ -94,26 +96,47 @@ impl TaskList {
         !self.status_lists.iter().any(|tbs| !tbs.is_empty())
     }
 
-    /// Removes a task, returning its title and description. Returns None if there's no such task, or if it's empty.
+    /// Removes a task, and returns it. Returns None if there's no such task, or if it's empty.
     ///
-    /// If it's the only task in its project, it's left in place but emptied, since every project shows at least one
+    /// If it's the only task in its project, an empty one takes its place, since every project shows at least one
     /// (possibly empty) task.
-    pub fn take_task(&mut self, status: usize, project: usize, task: usize) -> Option<(String, String)> {
+    pub fn take_task(&mut self, status: usize, project: usize, task: usize) -> Option<EditableTask> {
         let project = self.status_lists.get_mut(status)?.tasks_by_project.get_mut(project)?;
         if project.tasks.get(task)?.is_empty() {
             return None;
         }
 
         if project.tasks.len() == 1 {
-            let task = &mut project.tasks[0];
-            return Some((task.take_title(), task.take_description()));
+            return Some(std::mem::replace(&mut project.tasks[0], EditableTask::empty()));
         }
 
         let removed = project.tasks.remove(task);
         if project.selected_task > task || project.selected_task >= project.tasks.len() {
             project.selected_task = project.selected_task.saturating_sub(1);
         }
-        Some(removed.into_parts())
+        Some(removed)
+    }
+
+    /// Whether any task (including the ones of hidden projects) has this id.
+    pub fn contains_id(&self, id: Uuid) -> bool {
+        self.status_lists
+            .iter()
+            .flat_map(|list| &list.tasks_by_project)
+            .flat_map(|project| &project.tasks)
+            .any(|task| task.id() == id)
+            || self.hidden_tasks.iter().any(|task| task.id == Some(id))
+    }
+
+    /// Gives every task a new id. For tasks that are copies of others, e.g. from the template.
+    pub fn new_ids(&mut self) {
+        for list in &mut self.status_lists {
+            for project in &mut list.tasks_by_project {
+                project.tasks.iter_mut().for_each(EditableTask::new_id);
+            }
+        }
+        for task in &mut self.hidden_tasks {
+            task.id = Some(Uuid::new_v4());
+        }
     }
 
     /// Inserts a task at `index` (clamped to the number of tasks) and selects it.
@@ -127,6 +150,15 @@ impl TaskList {
         title: String,
         description: String,
     ) -> bool {
+        self.insert(status, project, index, EditableTask::new(title, description))
+    }
+
+    /// Like [`TaskList::insert_task`], with a task that may come from somewhere else (keeping its id, unless a task
+    /// here already has it).
+    pub fn insert(&mut self, status: usize, project: usize, index: usize, mut task: EditableTask) -> bool {
+        if self.contains_id(task.id()) {
+            task.new_id();
+        }
         let Some(project_list) = self
             .status_lists
             .get_mut(status)
@@ -139,12 +171,11 @@ impl TaskList {
             && only.is_empty()
             && only.description().trim().is_empty()
         {
-            only.set_title(title);
-            only.set_description(description);
+            *only = task;
             0
         } else {
             let index = index.min(project_list.tasks.len());
-            project_list.tasks.insert(index, EditableTask::new(title, description));
+            project_list.tasks.insert(index, task);
             index
         };
 
@@ -202,7 +233,17 @@ impl TaskList {
     }
 
     /// Shows the tasks of `day`. The selection goes back to the first task.
-    pub fn load_day(&mut self, day: Day) {
+    pub fn load_day(&mut self, mut day: Day) {
+        // Every task needs an id, and a different one.
+        let mut ids = HashSet::new();
+        for task in &mut day.tasks {
+            if !task.id.is_some_and(|id| ids.insert(id)) {
+                let id = Uuid::new_v4();
+                ids.insert(id);
+                task.id = Some(id);
+            }
+        }
+
         let visible_projects = self.settings.visible_projects();
         // Tasks whose project is hidden (or no longer exists as a visible project)
         // are set aside so they don't show up in the UI but aren't lost on save.
