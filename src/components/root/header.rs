@@ -69,11 +69,7 @@ impl Root {
         let free_right = if show_week { week_x - HEADER_GAP } else { right };
 
         // Selected date, centered. Only if it fits.
-        // A dot after the date when it has unsaved changes.
-        let mut date = self.selected_date.format("%Y-%m-%d").to_string();
-        if self.is_dirty(super::DataFile::Day) {
-            date.push_str(" •");
-        }
+        let date = self.selected_date.format("%Y-%m-%d").to_string();
         let date_style = Style::new(theme.list_header).bold();
         let date_width = canvas.measure(&date, &date_style);
         let date_x = ((canvas.width - date_width) / 2.0).round();

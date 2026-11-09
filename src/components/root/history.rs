@@ -37,6 +37,9 @@ pub struct History {
     last: Option<Snapshot>,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
+    /// Counts the changes to the content (including undoing and redoing), so others can tell whether it changed
+    /// (see [`Root::changes`]).
+    changes: u64,
 }
 
 impl Root {
@@ -75,6 +78,7 @@ impl Root {
             return;
         }
 
+        self.history.changes += 1;
         let last = self.history.last.replace(current).expect("checked above");
         self.history.undo.push(last);
         if self.history.undo.len() > MAX_UNDO {
@@ -91,7 +95,14 @@ impl Root {
             last: Some(self.snapshot()),
             undo: vec![],
             redo: vec![],
+            changes: self.history.changes,
         };
+    }
+
+    /// A number that grows every time the content changes (as of the last checkpoint), e.g. to save some time after
+    /// the last change. Moving the selection isn't a change.
+    pub fn changes(&self) -> u64 {
+        self.history.changes
     }
 
     /// Undoes the last change. Returns false if there's nothing to undo.
@@ -125,6 +136,7 @@ impl Root {
 
         self.restore(&snapshot);
         self.history.last = Some(snapshot);
+        self.history.changes += 1;
         true
     }
 
@@ -262,5 +274,21 @@ mod tests {
         root.selected_date = root.selected_date.succ_opt().unwrap();
         root.checkpoint();
         assert!(!root.undo());
+    }
+
+    #[test]
+    fn changes_count_content_changes_but_not_moving_the_selection() {
+        let mut root = new_root();
+        let start = root.changes();
+        add(&mut root, "a");
+        add(&mut root, "b");
+        assert_eq!(root.changes(), start + 2);
+
+        root.task_list_day.select(0, 0, 0);
+        root.checkpoint();
+        assert_eq!(root.changes(), start + 2);
+
+        assert!(root.undo());
+        assert_eq!(root.changes(), start + 3);
     }
 }

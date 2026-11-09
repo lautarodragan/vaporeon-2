@@ -63,6 +63,8 @@ const PANEL_GAP: f64 = 2.0;
 
 /// How long to wait after a file changes before checking it. Programs (and git) often write files in several steps.
 const FILE_CHANGE_DELAY: Duration = Duration::from_millis(250);
+/// Changes are saved (and committed) this long after the last one.
+const AUTOSAVE_DELAY: Duration = Duration::from_secs(10);
 
 const CONFLICT_OPTIONS: [PromptOption; 3] = [('r', "reload"), ('k', "keep mine"), ('b', "backup mine & reload")];
 const MIGRATION_OPTIONS: [PromptOption; 2] = [('y', "copy them"), ('n', "no")];
@@ -91,6 +93,10 @@ pub struct Ui {
     zoom: Cell<f64>,
     refresh_scheduled: Cell<bool>,
     refresh_scroll: Cell<bool>,
+    /// Saves a little after the last change (see [`AUTOSAVE_DELAY`]).
+    autosave_timer: RefCell<Option<glib::SourceId>>,
+    /// [`Root::changes`] as of the last refresh, to tell whether the content changed.
+    changes: Cell<u64>,
     /// The file being watched for changes, for each data file, and its monitor.
     file_monitors: RefCell<HashMap<DataFile, (PathBuf, gio::FileMonitor)>>,
     /// Files waiting to be checked for changes (see [`FILE_CHANGE_DELAY`]).
@@ -318,6 +324,8 @@ impl Ui {
                 zoom: Cell::new(1.0),
                 refresh_scheduled: Cell::new(false),
                 refresh_scroll: Cell::new(false),
+                autosave_timer: RefCell::new(None),
+                changes: Cell::new(0),
                 file_monitors: RefCell::new(HashMap::new()),
                 file_checks_scheduled: RefCell::new(vec![]),
                 prompts: RefCell::new(VecDeque::new()),
@@ -343,12 +351,62 @@ impl Ui {
         self.window.set_decorated(theme.window_decorations);
     }
 
+    /// Saves a while after the last change, so changes are committed and synced without having to save them.
+    /// Not while editing text (the wait starts over when editing ends), nor while asking what to do about a file that
+    /// changed on disk (saving would overwrite it).
+    fn schedule_autosave(&self, app: &AppRef) {
+        let (changes, dirty, editing) = {
+            let app = app.borrow();
+            let root = &app.root;
+            let dirty = DataFile::ALL.iter().any(|file| root.is_dirty(*file));
+            (root.changes(), dirty, root.editing().is_some())
+        };
+        let changed = self.changes.replace(changes) != changes;
+
+        if !dirty || editing || self.has_conflict_prompt() {
+            if let Some(id) = self.autosave_timer.borrow_mut().take() {
+                id.remove();
+            }
+            return;
+        }
+        if !changed && self.autosave_timer.borrow().is_some() {
+            return;
+        }
+
+        if let Some(id) = self.autosave_timer.borrow_mut().take() {
+            id.remove();
+        }
+        let ui = self.this.clone();
+        let app = app.clone();
+        let id = glib::timeout_add_local_once(AUTOSAVE_DELAY, move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+            ui.autosave_timer.borrow_mut().take();
+            if app.borrow().root.editing().is_some() || ui.has_conflict_prompt() {
+                return;
+            }
+            // Saving leaves an event that makes the refresh commit.
+            app.borrow_mut().root.save_all();
+            ui.refresh(&app, false);
+        });
+        *self.autosave_timer.borrow_mut() = Some(id);
+    }
+
+    fn has_conflict_prompt(&self) -> bool {
+        self.prompts
+            .borrow()
+            .iter()
+            .any(|prompt| matches!(prompt, Prompt::Conflict(_)))
+    }
+
     /// Makes the widgets match the model.
     ///
     /// `scroll`: whether to scroll to the selected task if it moved (for keyboard navigation).
     pub fn refresh(&self, app: &AppRef, scroll: bool) {
         // Everything that changes the model ends up here, so this is where changes are recorded for undoing.
         app.borrow_mut().root.checkpoint();
+        self.schedule_autosave(app);
 
         // What the model has to tell us.
         let (events, sync) = {

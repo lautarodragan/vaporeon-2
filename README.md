@@ -8,10 +8,11 @@ It reads and writes the same `settings.toml` and `actions.ini` (in `$XDG_CONFIG_
 
 ## Saving
 
-The day is saved (and committed, if `storage_path` is a git repository) with `Ctrl+S`, when going to another day,
-and when closing the window.
+Changes are saved (and committed, if `storage_path` is a git repository) 10 seconds after the last one, so there's no
+need to save. While editing text, 10 seconds after editing ends. They're also saved when going to another day, when
+closing the window, and with `Ctrl+S`. Undo (`Ctrl+Z`) works on what was saved too, and git keeps every version.
 
-A `•` next to the date means the day has unsaved changes. Messages (like "Saved", or errors) show up at the bottom.
+Messages (like errors) show up at the bottom.
 
 Files are written in one canonical form, so that different apps (or versions) write the same bytes for the same tasks,
 and every task has an id, so that it's the same task in different versions of a file. See
@@ -21,7 +22,7 @@ form the next time they're saved.
 ### Syncing with a git remote
 
 If `storage_path` is a git repository with a remote (e.g. a private GitHub repository), Vaporeon keeps it in sync:
-it commits whatever isn't committed yet, pulls (merging) and pushes. When starting, a minute after saving (so a
+it commits whatever isn't committed yet, pulls (merging) and pushes. When starting, half a minute after saving (so a
 burst of changes is pushed once), every five minutes, when the window gets the focus, and when closing. Git runs
 in the background, so the UI never waits for the network.
 

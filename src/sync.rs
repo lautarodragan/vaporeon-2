@@ -4,7 +4,7 @@
 //! Git runs in GIO's thread pool, so the UI never waits for it (or for the network). Only one git command runs at a
 //! time: requests are queued (see [`Sync::run`]). Syncing happens:
 //! - when starting,
-//! - a minute after committing (so a burst of changes is pushed once),
+//! - half a minute after committing (so a burst of changes is pushed once),
 //! - every few minutes,
 //! - when the window gets the focus (e.g. coming back to the computer after adding something from the phone),
 //! - and when closing (see `main.rs`; the window is hidden by then).
@@ -24,7 +24,7 @@ use gtk::{gio, glib};
 use crate::{AppRef, git, view::Ui};
 
 /// How long to wait after committing before pushing.
-const PUSH_DELAY: Duration = Duration::from_secs(60);
+const PUSH_DELAY: Duration = Duration::from_secs(30);
 /// How often to sync anyway.
 pub const PERIOD: Duration = Duration::from_secs(5 * 60);
 /// When the window gets the focus, sync only if the last sync is older than this.
