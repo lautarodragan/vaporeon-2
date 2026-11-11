@@ -7,10 +7,16 @@ on:
 jobs:
   test:
     runs-on: ubuntu-24.04
+    # A job that hangs (e.g. apt waiting on an unreachable mirror) fails instead of running for the default 6 hours.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
-      - run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev
+      # Retry downloads (including failures to resolve the mirror's name), and give up on unresponsive connections.
+      - run: |
+          APT_OPTIONS="-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          sudo apt-get $APT_OPTIONS update
+          sudo apt-get $APT_OPTIONS install -y libgtk-4-dev
 
       - run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup.sh
