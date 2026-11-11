@@ -35,6 +35,9 @@ bullet = "-"
 bullet_with_details = "="
 details_marker = "≡"
 
+# Whether long task titles wrap, taking more than one row. Otherwise, they're cut short (…).
+list_wrap = true
+
 # Whether long lines of the details wrap (at words, or anywhere if a word doesn't fit). Without wrapping,
 # the details scroll sideways.
 details_wrap = true

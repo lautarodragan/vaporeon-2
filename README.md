@@ -117,8 +117,9 @@ how: a dimmed preview of the details after the title (`preview`, the default), a
 `bullet_with_details`), a dot in the margin (`gutter`), or a mark at the end of the row (`right`, with `details_marker`).
 None of them moves the text.
 
-Besides colors, the theme has `font` (any Pango font description), `line_height`, `details_wrap` (whether long
-lines of the details wrap; on by default) and `window_decorations` (GTK title bar; off by default).
+Besides colors, the theme has `font` (any Pango font description), `line_height`, `list_wrap` (whether long task
+titles wrap, taking more than one row, with the preview of the details after them; on by default), `details_wrap`
+(whether long lines of the details wrap; on by default) and `window_decorations` (GTK title bar; off by default).
 
 ## Starting a new day
 

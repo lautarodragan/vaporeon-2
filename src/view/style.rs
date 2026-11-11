@@ -76,7 +76,9 @@ pub fn css(theme: &Theme, metrics: &Metrics, zoom: f64) -> String {
     let gutter_width = px(GUTTER_WIDTH);
     let gutter_dot = px(GUTTER_DOT);
     let gutter_space = gutter_width - gutter_dot;
-    // A space, as if the preview (and the marker) were more text after the title.
+    // Centered on the first row.
+    let gutter_top = ((metrics.line_height - gutter_dot) / 2.0).floor();
+    // A space, as if the marker were more text after the title.
     let preview_gap = metrics.space_width;
     let background = css_color(theme.window_background());
     let entry = css_color(theme.list_entry);
@@ -135,6 +137,7 @@ window.vaporeon scrolledwindow overshoot {{
 }}
 
 window.vaporeon label,
+window.vaporeon tasktext,
 window.vaporeon text,
 window.vaporeon textview {{
     {font}
@@ -199,14 +202,19 @@ window.vaporeon .gutter.details {{
     background-color: {decoration_details};
 }}
 
-window.vaporeon label.preview {{
-    color: {entry_dim};
-    margin-left: {preview_gap}px;
-}}
-
 window.vaporeon label.marker {{
     color: {decoration_details};
     margin-left: {preview_gap}px;
+}}
+
+/* A title that wraps makes the task taller: the rest stays on its first row. */
+window.vaporeon .task > .bullet,
+window.vaporeon .task > label.marker {{
+    min-height: {row_height}px;
+}}
+
+window.vaporeon .task > .gutter {{
+    margin-top: {gutter_top}px;
 }}
 
 window.vaporeon .project {{
@@ -245,10 +253,6 @@ window.vaporeon .task.drop-above {{
 
 window.vaporeon .task.drop-below {{
     box-shadow: inset 0 -1px {header}, 0 1px {header};
-}}
-
-window.vaporeon .task.selected > label.title {{
-    text-decoration-line: underline;
 }}
 "
     )

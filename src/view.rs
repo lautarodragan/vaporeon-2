@@ -44,7 +44,7 @@ use crate::{
         details_view::DetailsView,
         status_bar::{PromptOption, StatusBar},
         style::WINDOW_PADDING,
-        task_list_view::{DetailsStyle, DragAndDrop, OnEdit, OnTaskClick, TaskListView},
+        task_list_view::{DragAndDrop, OnEdit, OnTaskClick, TaskListView, TaskStyle},
     },
 };
 
@@ -54,6 +54,7 @@ mod scrollbars;
 mod status_bar;
 mod style;
 mod task_list_view;
+mod task_text;
 
 /// Below this width (in pixels), only one panel is shown, using the full width.
 /// At 100% zoom: it's scaled with the zoom.
@@ -450,27 +451,22 @@ impl Ui {
         let root = &app.root;
         let metrics = self.metrics.get();
         let focus = root.selected_panel();
-        let details = DetailsStyle {
+        let style = TaskStyle {
             indicator: app.theme.details_indicator,
             bullet: app.theme.bullet.clone(),
             bullet_with_details: app.theme.bullet_with_details.clone(),
             marker: app.theme.details_marker.clone(),
+            wrap: app.theme.list_wrap,
+            row_height: metrics.line_height,
+            space_width: metrics.space_width,
         };
 
-        self.day.borrow_mut().update(
-            root.task_list_day(),
-            focus == Panel::Left,
-            scroll,
-            metrics.line_height,
-            &details,
-        );
-        self.global.borrow_mut().update(
-            root.task_list_global(),
-            focus == Panel::Right,
-            scroll,
-            metrics.line_height,
-            &details,
-        );
+        self.day
+            .borrow_mut()
+            .update(root.task_list_day(), focus == Panel::Left, scroll, &style);
+        self.global
+            .borrow_mut()
+            .update(root.task_list_global(), focus == Panel::Right, scroll, &style);
         self.details.borrow_mut().update(
             root.task_details(),
             focus == Panel::Right,

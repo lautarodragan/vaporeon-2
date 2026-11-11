@@ -5,7 +5,7 @@
 //! window. Painting the background color over it (e.g. with the CSS `undershoot` nodes) would make the edges more
 //! opaque than the rest of the window.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use gtk::{glib, graphene, gsk, prelude::*, subclass::prelude::*};
 
@@ -16,6 +16,8 @@ mod imp {
     pub struct FadeEdges {
         /// How far the fade reaches into the content, in pixels.
         pub size: Cell<f32>,
+        /// See [`super::FadeEdges::after_next_layout`].
+        pub after_layout: RefCell<Option<Box<dyn FnOnce()>>>,
     }
 
     #[glib::object_subclass]
@@ -23,10 +25,6 @@ mod imp {
         const NAME: &'static str = "VaporeonFadeEdges";
         type Type = super::FadeEdges;
         type ParentType = gtk::Widget;
-
-        fn class_init(class: &mut Self::Class) {
-            class.set_layout_manager_type::<gtk::BinLayout>();
-        }
     }
 
     impl ObjectImpl for FadeEdges {
@@ -38,6 +36,25 @@ mod imp {
     }
 
     impl WidgetImpl for FadeEdges {
+        // No layout manager: with one, GTK wouldn't call `size_allocate`, which is needed for `after_layout`.
+        fn measure(&self, orientation: gtk::Orientation, for_size: i32) -> (i32, i32, i32, i32) {
+            match self.obj().first_child() {
+                Some(child) => child.measure(orientation, for_size),
+                None => (0, 0, -1, -1),
+            }
+        }
+
+        fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
+            if let Some(child) = self.obj().first_child() {
+                child.allocate(width, height, baseline, None);
+            }
+            if let Some(callback) = self.after_layout.take() {
+                // Not right now: changing what's laid out while laying it out would have to wait for the next frame
+                // anyway, and GTK warns about it.
+                glib::idle_add_local_once(callback);
+            }
+        }
+
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
             let widget = self.obj();
             let Some(scrolled) = widget.first_child().and_downcast::<gtk::ScrolledWindow>() else {
@@ -111,6 +128,13 @@ impl FadeEdges {
             ));
         }
         widget
+    }
+
+    /// Calls `callback` once the content has been laid out again, e.g. to scroll to a widget, which needs to know
+    /// where it ended up. Replaces a callback that's still waiting.
+    pub fn after_next_layout(&self, callback: impl FnOnce() + 'static) {
+        self.imp().after_layout.replace(Some(Box::new(callback)));
+        self.queue_allocate();
     }
 
     pub fn set_size(&self, size: f64) {

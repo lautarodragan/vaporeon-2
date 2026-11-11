@@ -52,27 +52,6 @@ impl TaskListForStatus {
         self.tasks_by_project.iter_mut().find_map(|p| p.editing_task_mut())
     }
 
-    pub fn height(&self) -> usize {
-        1 + if self.project_filter.is_none() {
-            self.tasks_by_project.iter().map(|p| p.height() + 1).sum::<usize>()
-        } else {
-            self.tasks_by_project[self.selected_project].height()
-        }
-    }
-
-    pub fn cursor_y(&self) -> usize {
-        1 + if self.project_filter.is_none() {
-            self.tasks_by_project
-                .iter()
-                .take(self.selected_project)
-                .map(|p| p.height() + 1)
-                .sum::<usize>()
-                + self.tasks_by_project[self.selected_project].cursor_y()
-        } else {
-            self.tasks_by_project[self.selected_project].cursor_y()
-        }
-    }
-
     pub fn is_empty(&self) -> bool {
         !self.tasks_by_project.iter().any(|tbp| !tbp.is_empty())
     }

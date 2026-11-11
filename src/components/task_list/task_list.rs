@@ -199,16 +199,6 @@ impl TaskList {
             .is_some_and(|list| project < list.tasks_by_project.len())
     }
 
-    /// Row (counting from the top of the list) of the selected task.
-    pub fn cursor_y(&self) -> usize {
-        self.status_lists
-            .iter()
-            .take(self.selected_status_list)
-            .map(|l| l.height())
-            .sum::<usize>()
-            + self.status_lists[self.selected_status_list].cursor_y()
-    }
-
     pub fn editing_task_mut(&mut self) -> Option<&mut EditableTask> {
         self.status_lists.iter_mut().find_map(|list| list.editing_task_mut())
     }

@@ -14,7 +14,7 @@ use gtk::{gdk, glib, prelude::*};
 use crate::{
     components::{EditableTask, task_list::TaskList},
     theme::DetailsIndicator,
-    view::fade_edges::FadeEdges,
+    view::{fade_edges::FadeEdges, task_text::TaskText},
 };
 
 /// Called when a task is clicked, with the indices of its status, project and task, and the number of clicks
@@ -68,25 +68,33 @@ impl Structure {
     }
 }
 
-/// How tasks with details (a description) look. See `details_indicator` in the theme.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DetailsStyle {
+/// How tasks look, from the theme and the font.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TaskStyle {
+    /// How tasks with details (a description) look. See `details_indicator` in the theme.
     pub indicator: DetailsIndicator,
     pub bullet: String,
     pub bullet_with_details: String,
     pub marker: String,
+    /// Whether long titles wrap (`list_wrap` in the theme), or are cut short.
+    pub wrap: bool,
+    /// Height of a row, in pixels.
+    pub row_height: f64,
+    /// Width of a space, in pixels.
+    pub space_width: f64,
 }
 
-/// A task: `[gutter] [bullet] [title or editor] [preview] [marker]`.
+/// A task: `[gutter] [bullet] [title and preview, or editor] [marker]`.
+///
+/// A title that wraps makes the task more than one row tall. The rest stays on its first row.
 struct TaskRow {
     row: gtk::Box,
     /// Dot in the margin, for tasks with details (`DetailsIndicator::Gutter`).
     gutter: gtk::Box,
     bullet: gtk::Label,
-    label: gtk::Label,
+    /// The title, and the beginning of the details (`DetailsIndicator::Preview`).
+    text: TaskText,
     editor: Option<gtk::Text>,
-    /// Beginning of the details (`DetailsIndicator::Preview`).
-    preview: gtk::Label,
     /// Mark at the end of the row (`DetailsIndicator::Right`).
     marker: gtk::Label,
 }
@@ -97,35 +105,31 @@ impl TaskRow {
         row.add_css_class("row");
         row.add_css_class("task");
 
-        let gutter = gtk::Box::builder().valign(gtk::Align::Center).build();
+        let gutter = gtk::Box::builder().valign(gtk::Align::Start).build();
         gutter.add_css_class("gutter");
 
-        let bullet = gtk::Label::builder().label("-").xalign(0.0).build();
+        let bullet = gtk::Label::builder()
+            .label("-")
+            .xalign(0.0)
+            .valign(gtk::Align::Start)
+            .build();
         bullet.add_css_class("bullet");
 
-        let label = gtk::Label::builder()
-            .xalign(0.0)
-            .single_line_mode(true)
-            .ellipsize(gtk::pango::EllipsizeMode::End)
-            .build();
-        label.add_css_class("title");
-
         // Takes the rest of the row, so the marker is at its right end.
-        let preview = gtk::Label::builder()
-            .xalign(0.0)
-            .hexpand(true)
-            .single_line_mode(true)
-            .ellipsize(gtk::pango::EllipsizeMode::End)
-            .build();
-        preview.add_css_class("preview");
+        let text = TaskText::new();
+        text.set_hexpand(true);
+        text.add_css_class("title");
 
-        let marker = gtk::Label::builder().xalign(1.0).visible(false).build();
+        let marker = gtk::Label::builder()
+            .xalign(1.0)
+            .valign(gtk::Align::Start)
+            .visible(false)
+            .build();
         marker.add_css_class("marker");
 
         row.append(&gutter);
         row.append(&bullet);
-        row.append(&label);
-        row.append(&preview);
+        row.append(&text);
         row.append(&marker);
 
         let click = gtk::GestureClick::new();
@@ -220,11 +224,10 @@ impl TaskRow {
 
         Self {
             row,
-            label,
+            text,
             editor: None,
             gutter,
             bullet,
-            preview,
             marker,
         }
     }
@@ -233,18 +236,18 @@ impl TaskRow {
         &mut self,
         task: &EditableTask,
         selected: bool,
-        details: &DetailsStyle,
+        style: &TaskStyle,
         on_edit: &OnEdit,
         syncing: &Rc<Cell<bool>>,
     ) {
         let description = task.description().trim();
         let has_details = !description.is_empty();
-        let indicator = has_details.then_some(details.indicator);
+        let indicator = has_details.then_some(style.indicator);
 
         let bullet = if indicator == Some(DetailsIndicator::Bullet) {
-            &details.bullet_with_details
+            &style.bullet_with_details
         } else {
-            &details.bullet
+            &style.bullet
         };
         if self.bullet.text() != bullet.as_str() {
             self.bullet.set_text(bullet);
@@ -258,17 +261,21 @@ impl TaskRow {
             Some(DetailsIndicator::Preview) => description.lines().next().unwrap_or_default(),
             _ => "",
         };
-        if self.preview.text() != preview {
-            self.preview.set_text(preview);
-        }
+        // An empty task still shows something to underline when selected.
+        let title = if selected && task.title().is_empty() {
+            " "
+        } else {
+            task.title()
+        };
+        self.text.set_content(title, preview, selected);
+        self.text.set_layout(style.wrap, style.row_height, style.space_width);
 
         // While editing, the editor gets the whole row.
         let editing = task.is_editing();
-        self.preview.set_visible(!editing);
         self.marker
             .set_visible(indicator == Some(DetailsIndicator::Right) && !editing);
-        if self.marker.text() != details.marker.as_str() {
-            self.marker.set_text(&details.marker);
+        if self.marker.text() != style.marker.as_str() {
+            self.marker.set_text(&style.marker);
         }
 
         if editing {
@@ -292,7 +299,7 @@ impl TaskRow {
                     }
                 ));
 
-                self.row.remove(&self.label);
+                self.row.remove(&self.text);
                 self.row.insert_child_after(&editor, Some(&self.bullet));
                 editor.grab_focus_without_selecting();
                 editor.set_position(-1);
@@ -303,17 +310,7 @@ impl TaskRow {
 
         if let Some(editor) = self.editor.take() {
             self.row.remove(&editor);
-            self.row.insert_child_after(&self.label, Some(&self.bullet));
-        }
-
-        // An empty task still shows something to underline when selected.
-        let text = if selected && task.title().is_empty() {
-            " "
-        } else {
-            task.title()
-        };
-        if self.label.text() != text {
-            self.label.set_text(text);
+            self.row.insert_child_after(&self.text, Some(&self.bullet));
         }
 
         if selected {
@@ -332,10 +329,8 @@ pub struct TaskListView {
     /// Task rows, by status, project and task.
     rows: Vec<Vec<Vec<TaskRow>>>,
     structure: Option<Structure>,
-    last_cursor_y: Option<usize>,
-    /// Scroll target (top and bottom of the selected row, in pixels) that couldn't be reached yet, because the
-    /// rows were just added and GTK hasn't measured them yet. Applied when the scroll range changes.
-    pending_scroll: Rc<Cell<Option<(f64, f64)>>>,
+    /// The selected task, as of the last update: (status, project, task).
+    last_selection: Option<(usize, usize, usize)>,
     row_height: Rc<Cell<f64>>,
     on_task_click: OnTaskClick,
     on_edit: OnEdit,
@@ -355,23 +350,7 @@ impl TaskListView {
             .build();
         super::scrollbars::hide(&scrolled);
 
-        let pending_scroll: Rc<Cell<Option<(f64, f64)>>> = Rc::new(Cell::new(None));
         let row_height = Rc::new(Cell::new(1.0));
-
-        scrolled.vadjustment().connect_changed(glib::clone!(
-            #[strong]
-            pending_scroll,
-            #[strong]
-            row_height,
-            move |adjustment| {
-                if let Some((top, bottom)) = pending_scroll.get()
-                    && scroll_into_view(adjustment, top, bottom, row_height.get())
-                {
-                    pending_scroll.set(None);
-                }
-            }
-        ));
-
         setup_drag_autoscroll(&scrolled, row_height.clone());
 
         Self {
@@ -380,8 +359,7 @@ impl TaskListView {
             content,
             rows: vec![],
             structure: None,
-            last_cursor_y: None,
-            pending_scroll,
+            last_selection: None,
             row_height,
             on_task_click,
             on_edit,
@@ -394,7 +372,8 @@ impl TaskListView {
     ///
     /// With `scroll`, if the selection moved, scrolls so the selected task is visible. This is used for keyboard
     /// navigation. Mouse clicks don't scroll (the clicked task is already visible).
-    pub fn update(&mut self, list: &TaskList, has_focus: bool, scroll: bool, row_height: f64, details: &DetailsStyle) {
+    pub fn update(&mut self, list: &TaskList, has_focus: bool, scroll: bool, style: &TaskStyle) {
+        let row_height = style.row_height;
         self.row_height.set(row_height);
         self.widget.set_size(row_height);
 
@@ -415,28 +394,34 @@ impl TaskListView {
                         && s == list.selected_status_index()
                         && p == status.selected_project
                         && t == project.selected_task;
-                    row.update(task, selected, details, &self.on_edit, &self.syncing);
+                    row.update(task, selected, style, &self.on_edit, &self.syncing);
                 }
             }
         }
 
-        let cursor_y = list.cursor_y();
-        if scroll && (rebuilt || self.last_cursor_y != Some(cursor_y)) {
-            let top = cursor_y as f64 * row_height;
-            let bottom = top + row_height;
+        let selection = list.selection();
+        if scroll && (rebuilt || self.last_selection != Some(selection)) {
             // Stop any kinetic scrolling still going on (e.g. from the mouse wheel or a touchpad), otherwise it
             // would override the scroll position we set. Disabling kinetic scrolling cancels it.
             self.scrolled.set_kinetic_scrolling(false);
             self.scrolled.set_kinetic_scrolling(true);
 
-            let adjustment = self.scrolled.vadjustment();
-            if scroll_into_view(&adjustment, top, bottom, row_height) {
-                self.pending_scroll.set(None);
-            } else {
-                self.pending_scroll.set(Some((top, bottom)));
+            // Where the row is (tasks can be more than one row tall) is only known once it's laid out: new rows,
+            // or texts that changed, haven't been yet.
+            let (s, p, t) = selection;
+            if let Some(row) = self.rows.get(s).and_then(|r| r.get(p)).and_then(|r| r.get(t)) {
+                let row = row.row.clone();
+                let content = self.content.clone();
+                let adjustment = self.scrolled.vadjustment();
+                self.widget.after_next_layout(move || {
+                    if let Some(bounds) = row.compute_bounds(&content) {
+                        let top = bounds.y() as f64;
+                        scroll_into_view(&adjustment, top, top + bounds.height() as f64, row_height);
+                    }
+                });
             }
         }
-        self.last_cursor_y = Some(cursor_y);
+        self.last_selection = Some(selection);
     }
 
     fn rebuild(&mut self, list: &TaskList) {
@@ -616,11 +601,10 @@ fn empty_row() -> gtk::Box {
 }
 
 /// Scrolls so that the range `[top, bottom]` is visible, with some padding around it.
-/// Returns false if the range is beyond what can currently be scrolled to (e.g. rows that GTK hasn't measured yet).
-fn scroll_into_view(adjustment: &gtk::Adjustment, top: f64, bottom: f64, row_height: f64) -> bool {
+fn scroll_into_view(adjustment: &gtk::Adjustment, top: f64, bottom: f64, row_height: f64) {
     let page = adjustment.page_size();
     if page <= 0.0 {
-        return false;
+        return;
     }
 
     let padding = (SCROLL_PADDING_ROWS * row_height).min(((page - (bottom - top)) / 2.0).max(0.0));
@@ -633,5 +617,4 @@ fn scroll_into_view(adjustment: &gtk::Adjustment, top: f64, bottom: f64, row_hei
 
     let max = (adjustment.upper() - page).max(adjustment.lower());
     adjustment.set_value(value.clamp(adjustment.lower(), max));
-    value <= max + 0.5
 }
