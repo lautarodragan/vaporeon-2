@@ -55,6 +55,7 @@ mod status_bar;
 mod style;
 mod task_list_view;
 mod task_text;
+mod title_editor;
 
 /// Below this width (in pixels), only one panel is shown, using the full width.
 /// At 100% zoom: it's scaled with the zoom.
@@ -458,6 +459,7 @@ impl Ui {
             marker: app.theme.details_marker.clone(),
             wrap: app.theme.list_wrap,
             row_height: metrics.line_height,
+            text_height: metrics.text_height,
             space_width: metrics.space_width,
         };
 

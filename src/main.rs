@@ -454,17 +454,15 @@ fn setup_input(app: &AppRef, ui: &Rc<Ui>) {
                     return glib::Propagation::Stop;
                 }
 
-                // Don't let these move the focus out of a single-line editor.
+                // Don't let these move the focus out of the title's editor. Up and Down move between the lines of a
+                // title that wraps (see `Editor` in task_list_view.rs).
+                let wraps = app.borrow().theme.list_wrap;
                 if target == EditTarget::TaskTitle
-                    && matches!(
-                        event.code,
-                        KeyCode::Up
-                            | KeyCode::Down
-                            | KeyCode::PageUp
-                            | KeyCode::PageDown
-                            | KeyCode::Tab
-                            | KeyCode::BackTab
-                    )
+                    && match event.code {
+                        KeyCode::Up | KeyCode::Down => !wraps,
+                        KeyCode::PageUp | KeyCode::PageDown | KeyCode::Tab | KeyCode::BackTab => true,
+                        _ => false,
+                    }
                 {
                     return glib::Propagation::Stop;
                 }

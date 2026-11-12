@@ -14,7 +14,7 @@ use gtk::{gdk, glib, prelude::*};
 use crate::{
     components::{EditableTask, task_list::TaskList},
     theme::DetailsIndicator,
-    view::{fade_edges::FadeEdges, task_text::TaskText},
+    view::{fade_edges::FadeEdges, task_text::TaskText, title_editor::TitleEditor},
 };
 
 /// Called when a task is clicked, with the indices of its status, project and task, and the number of clicks
@@ -80,6 +80,8 @@ pub struct TaskStyle {
     pub wrap: bool,
     /// Height of a row, in pixels.
     pub row_height: f64,
+    /// Height of the text itself, in pixels.
+    pub text_height: f64,
     /// Width of a space, in pixels.
     pub space_width: f64,
 }
@@ -94,7 +96,7 @@ struct TaskRow {
     bullet: gtk::Label,
     /// The title, and the beginning of the details (`DetailsIndicator::Preview`).
     text: TaskText,
-    editor: Option<gtk::Text>,
+    editor: Option<Editor>,
     /// Mark at the end of the row (`DetailsIndicator::Right`).
     marker: gtk::Label,
 }
@@ -270,46 +272,26 @@ impl TaskRow {
         self.text.set_content(title, preview, selected);
         self.text.set_layout(style.wrap, style.row_height, style.space_width);
 
-        // While editing, the editor gets the whole row.
+        // Also while editing: so the editor is as wide as the title, and wraps it the same way.
         let editing = task.is_editing();
-        self.marker
-            .set_visible(indicator == Some(DetailsIndicator::Right) && !editing);
+        self.marker.set_visible(indicator == Some(DetailsIndicator::Right));
         if self.marker.text() != style.marker.as_str() {
             self.marker.set_text(&style.marker);
         }
 
         if editing {
             if self.editor.is_none() {
-                let editor = gtk::Text::builder().hexpand(true).valign(gtk::Align::Center).build();
-                editor.add_css_class("title");
-
-                syncing.set(true);
-                editor.set_text(task.title());
-                syncing.set(false);
-
-                editor.connect_changed(glib::clone!(
-                    #[strong]
-                    on_edit,
-                    #[strong]
-                    syncing,
-                    move |editor| {
-                        if !syncing.get() {
-                            on_edit(editor.text().to_string());
-                        }
-                    }
-                ));
-
+                let editor = Editor::new(task.title(), style, on_edit, syncing);
                 self.row.remove(&self.text);
-                self.row.insert_child_after(&editor, Some(&self.bullet));
-                editor.grab_focus_without_selecting();
-                editor.set_position(-1);
+                self.row.insert_child_after(editor.widget(), Some(&self.bullet));
+                editor.focus();
                 self.editor = Some(editor);
             }
             return;
         }
 
         if let Some(editor) = self.editor.take() {
-            self.row.remove(&editor);
+            self.row.remove(editor.widget());
             self.row.insert_child_after(&self.text, Some(&self.bullet));
         }
 
@@ -317,6 +299,97 @@ impl TaskRow {
             self.row.add_css_class("selected");
         } else {
             self.row.remove_css_class("selected");
+        }
+    }
+}
+
+/// Edits a task's title, where it's shown.
+enum Editor {
+    /// With `list_wrap`: the title wraps while editing too, and the task grows and shrinks with it. Each line is
+    /// exactly one row tall, like the title's.
+    Wrapped(TitleEditor, gtk::TextView),
+    /// Without `list_wrap`: one line, scrolling sideways.
+    Line(gtk::Text),
+}
+
+impl Editor {
+    fn new(title: &str, style: &TaskStyle, on_edit: &OnEdit, syncing: &Rc<Cell<bool>>) -> Self {
+        if !style.wrap {
+            let editor = gtk::Text::builder().hexpand(true).valign(gtk::Align::Center).build();
+            editor.add_css_class("title");
+            syncing.set(true);
+            editor.set_text(title);
+            syncing.set(false);
+            editor.connect_changed(glib::clone!(
+                #[strong]
+                on_edit,
+                #[strong]
+                syncing,
+                move |editor| {
+                    if !syncing.get() {
+                        on_edit(editor.text().to_string());
+                    }
+                }
+            ));
+            return Self::Line(editor);
+        }
+
+        let title_editor = TitleEditor::new(style.row_height, style.text_height);
+        let editor = title_editor.text_view();
+        editor.add_css_class("title");
+        // Up and Down move between the lines of the title. On its first or last line, they'd move the focus out of
+        // the editor instead.
+        editor.connect_keynav_failed(|_, _| glib::Propagation::Stop);
+
+        let buffer = editor.buffer();
+        // A title is a single line (that may wrap): line breaks, e.g. in pasted text, become spaces. Enter itself
+        // never gets here: it confirms the edit (see `main.rs`).
+        buffer.connect_insert_text(|buffer, position, text| {
+            if text.contains(['\n', '\r']) {
+                let text = text.replace("\r\n", " ").replace(['\n', '\r'], " ");
+                buffer.stop_signal_emission_by_name("insert-text");
+                buffer.insert(position, &text);
+            }
+        });
+        syncing.set(true);
+        buffer.set_text(title);
+        syncing.set(false);
+        buffer.connect_changed(glib::clone!(
+            #[strong]
+            on_edit,
+            #[strong]
+            syncing,
+            move |buffer| {
+                if !syncing.get() {
+                    on_edit(buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string());
+                }
+            }
+        ));
+        // Undoing shouldn't go back to before the title was there.
+        buffer.set_enable_undo(false);
+        buffer.set_enable_undo(true);
+        Self::Wrapped(title_editor, editor)
+    }
+
+    fn widget(&self) -> &gtk::Widget {
+        match self {
+            Self::Wrapped(title_editor, _) => title_editor.upcast_ref(),
+            Self::Line(editor) => editor.upcast_ref(),
+        }
+    }
+
+    /// Gives it the keyboard focus, with the cursor at the end.
+    fn focus(&self) {
+        match self {
+            Self::Wrapped(_, editor) => {
+                editor.grab_focus();
+                let buffer = editor.buffer();
+                buffer.place_cursor(&buffer.end_iter());
+            }
+            Self::Line(editor) => {
+                editor.grab_focus_without_selecting();
+                editor.set_position(-1);
+            }
         }
     }
 }
@@ -400,7 +473,8 @@ impl TaskListView {
         }
 
         let selection = list.selection();
-        if scroll && (rebuilt || self.last_selection != Some(selection)) {
+        // While editing a title, it may grow a line, so it's kept in view too.
+        if (scroll && (rebuilt || self.last_selection != Some(selection))) || list.is_editing() {
             // Stop any kinetic scrolling still going on (e.g. from the mouse wheel or a touchpad), otherwise it
             // would override the scroll position we set. Disabling kinetic scrolling cancels it.
             self.scrolled.set_kinetic_scrolling(false);
