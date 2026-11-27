@@ -222,6 +222,20 @@ impl TaskList {
         self.load_day(Day::from_file_or_default(file_name));
     }
 
+    /// Uses other projects (e.g. they changed in the repository), keeping the tasks.
+    pub fn set_settings(&mut self, settings: Settings) {
+        let day = self.to_day();
+        self.settings = settings;
+        // A filter is the index of a visible project: there may be fewer now.
+        if self
+            .project_filter
+            .is_some_and(|i| i >= self.settings.visible_projects().len())
+        {
+            self.project_filter = None;
+        }
+        self.load_day(day);
+    }
+
     /// Shows the tasks of `day`. The selection goes back to the first task.
     pub fn load_day(&mut self, mut day: Day) {
         // Every task needs an id, and a different one.

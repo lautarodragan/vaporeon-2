@@ -5,6 +5,12 @@ Bullet Journal and stuff. GTK 4 port of [vaporeon](https://github.com/lautarodra
 Everything works the same as in the terminal version: same keyboard shortcuts, same files.
 It reads and writes the same `settings.toml` and `actions.ini` (in `$XDG_CONFIG_HOME/vaporeon`, which is
 `~/.config/vaporeon` by default) and the day files in `storage_path` (`~/vaporeon` by default), so both versions can be used interchangeably.
+Except for the projects: the terminal version reads them from `settings.toml`, and this one from `vaporeon.toml`.
+
+The projects are in `vaporeon.toml`, next to the day files, so every device that uses them (e.g. through git) has
+the same ones. `settings.toml` has what's up to each device: `storage_path`, and `hidden_projects` (ids of projects not
+shown on it). Projects in `settings.toml`, as older versions kept them, are moved to `vaporeon.toml` if it isn't there
+yet. See [`docs/file-format.md`](docs/file-format.md#vaporeontoml).
 
 ## Saving
 

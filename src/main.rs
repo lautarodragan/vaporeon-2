@@ -30,6 +30,7 @@ mod format;
 mod git;
 mod log_format;
 mod models;
+mod repo_config;
 mod settings;
 mod state;
 mod sync;
@@ -57,6 +58,7 @@ pub struct App {
     actions: Actions,
     /// Kept around because the file monitor stops working when dropped.
     theme_file_monitor: Option<gio::FileMonitor>,
+    repo_config_monitor: Option<gio::FileMonitor>,
     /// Syncing with the git remote. Set once the UI exists.
     sync: Option<Rc<sync::Sync>>,
 }
@@ -156,6 +158,7 @@ fn build_ui(application: &gtk::Application) {
         zoom: state.zoom,
         actions,
         theme_file_monitor: None,
+        repo_config_monitor: None,
         sync: None,
     }));
 
@@ -178,6 +181,7 @@ fn build_ui(application: &gtk::Application) {
 
     setup_input(&app, &ui);
     watch_theme_file(&app, &ui);
+    watch_repo_config(&app, &ui);
 
     window.connect_close_request(glib::clone!(
         #[weak]
@@ -536,6 +540,48 @@ fn paste(app: &AppRef, ui: &Rc<Ui>) {
 
 /// Reloads the theme whenever `~/.config/vaporeon/theme.toml` changes, so it's easy to tweak colors, fonts
 /// and opacity while looking at the result.
+/// Reloads the projects when the repository's `vaporeon.toml` changes, e.g. pulled from the git remote.
+fn watch_repo_config(app: &AppRef, ui: &Rc<Ui>) {
+    let path = repo_config::RepoConfig::path(&app.borrow().settings.storage_path);
+    let file = gio::File::for_path(&path);
+    let monitor = match file.monitor_file(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE) {
+        Ok(monitor) => monitor,
+        Err(err) => {
+            log::warn!("Can't watch {path:?} for changes: {err:?}");
+            return;
+        }
+    };
+
+    monitor.connect_changed(glib::clone!(
+        #[weak]
+        app,
+        #[weak]
+        ui,
+        move |_, _, _, event| {
+            if !matches!(
+                event,
+                gio::FileMonitorEvent::ChangesDoneHint | gio::FileMonitorEvent::Created
+            ) {
+                return;
+            }
+            let Some(settings) = app.borrow().settings.with_reloaded_projects() else {
+                return;
+            };
+            log::debug!("The projects changed in {}. Reloading them.", repo_config::FILE_NAME);
+            {
+                let mut app = app.borrow_mut();
+                app.settings = settings.clone();
+                app.root.set_settings(settings);
+                app.root
+                    .info(format!("The projects changed in {}.", repo_config::FILE_NAME));
+            }
+            ui.refresh(&app, false);
+        }
+    ));
+
+    app.borrow_mut().repo_config_monitor = Some(monitor);
+}
+
 fn watch_theme_file(app: &AppRef, ui: &Rc<Ui>) {
     let Ok(path) = get_config_file_path("theme") else {
         return;

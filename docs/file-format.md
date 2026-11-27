@@ -5,8 +5,9 @@ Vaporeon keeps its data in TOML files, in a directory that's usually a git repos
 - `YYYY-MM-DD.toml`: the tasks of a day.
 - `global.toml`: the global task list.
 - `template.toml`: the tasks a day can start with.
+- `vaporeon.toml`: the configuration of the data, like the projects (see [below](#vaporeontoml)).
 
-All of them have the same format. Any valid TOML with the right fields can be read, but there's exactly one way to
+The task files have the same format. Any valid TOML with the right fields can be read, but there's exactly one way to
 write a file, described here, so that every app that writes these files (e.g. on different devices) writes the same
 bytes for the same tasks. Otherwise, files would change every time a different app saves them, and merging them would
 conflict for no reason.
@@ -108,3 +109,42 @@ copied to another day (unfinished tasks are copied to the next day). That's what
 two versions of a file.
 
 A task gets a new id when it's created, pasted, duplicated, or added from the template.
+
+## `vaporeon.toml`
+
+What every device needs to know about the data: for now, the projects. Without it, a `project_id` doesn't say which
+project a task belongs to.
+
+```toml
+version = 1
+
+[[projects]]
+id = 0
+name = "Casita"
+
+[[projects]]
+id = 2
+name = "RedBee"
+```
+
+- `version`: the version of this format, `1`. An app that finds a greater one may not read the file correctly.
+- `projects`: in the order they're shown. `id` is what tasks have in `project_id`; `name`, what's shown.
+
+It's written in one canonical form too: `version`, then each project as a `[[projects]]` table preceded by an empty
+line, with `id` and then `name` (a single-line basic string, escaped like titles). UTF-8, `\n` line endings, ending with
+a newline.
+
+What's up to each device isn't here: where the data is, or which projects are hidden on it. On the desktop app, that's
+in `settings.toml` (`storage_path`, `hidden_projects`).
+
+### Rules for apps
+
+- **Don't write default projects** when there's no `vaporeon.toml`: another device may have written the real ones, and
+  they haven't been pulled yet. Writing it would conflict, or worse, replace them. Write it only when the user changes
+  the projects. (The desktop app also writes it once, to move the projects that older versions kept in
+  `settings.toml`.)
+- **Tasks of projects that aren't in the file aren't lost**: they're written back as they are. Showing them (e.g. as
+  "Project 3") is better than showing them under another project.
+- **New projects** get the smallest id greater than every other one. Two devices creating a project at the same time
+  (before syncing) would both use the same id, but that's rare enough, and git reports it as a conflict.
+- When the file changes (e.g. pulled), the projects are reloaded.

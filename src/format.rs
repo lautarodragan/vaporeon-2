@@ -54,7 +54,7 @@ fn status_name(status: &TaskStatus) -> &'static str {
 }
 
 /// The inside of a basic string (`"..."`).
-fn escape_single_line(text: &str) -> String {
+pub fn escape_single_line(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
         match c {

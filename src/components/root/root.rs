@@ -215,6 +215,22 @@ impl Root {
         self.copy_unfinished_from(previous);
     }
 
+    /// Uses other projects, e.g. when they change in the repository's `vaporeon.toml`. Whatever is being edited is kept,
+    /// as if confirmed.
+    pub fn set_settings(&mut self, settings: Settings) {
+        self.finish_editing();
+        self.task_list_day.set_settings(settings.clone());
+        self.task_list_global.set_settings(settings.clone());
+        self.settings = settings;
+        if self
+            .project_filter
+            .is_some_and(|i| i >= self.settings.visible_projects().len())
+        {
+            self.set_filter(None);
+        }
+        self.on_selection_change();
+    }
+
     pub fn set_filter(&mut self, project_index: Option<usize>) {
         // Ignore filters that point past the number of visible projects, so e.g.
         // pressing the "filter project 4" key with fewer projects is a no-op
@@ -786,5 +802,33 @@ mod tests {
         let reread: Day = toml::from_str(&text).unwrap();
         let reread_ids: std::collections::HashSet<_> = reread.tasks.iter().map(|t| t.id.unwrap()).collect();
         assert_eq!(reread_ids, ids);
+    }
+
+    #[test]
+    fn changing_the_projects_keeps_the_tasks() {
+        let mut root = root_with_tasks();
+        // As if it had just been saved.
+        root.take_snapshot(DataFile::Day);
+        let before = crate::format::day_to_string(&root.to_day());
+
+        // Project 0 hidden, project 1 renamed and first.
+        let mut settings = Settings::default();
+        settings.projects.swap(0, 1);
+        settings.projects[0].name = "Laburo".to_string();
+        settings.projects[1].hidden = true;
+        root.set_filter(Some(2));
+        root.set_settings(settings);
+
+        let projects: Vec<_> = root.task_list_day.status_lists()[0]
+            .tasks_by_project
+            .iter()
+            .map(|p| p.project_name.clone())
+            .collect();
+        assert_eq!(projects, ["Laburo", "Hobbies"]);
+        // The filter pointed past the visible projects.
+        assert_eq!(root.project_filter, None);
+        // Hidden, not lost: the file is the same.
+        assert_eq!(crate::format::day_to_string(&root.to_day()), before);
+        assert!(!root.is_dirty(DataFile::Day));
     }
 }
